@@ -169,8 +169,8 @@ Every row below differs between staging and production — use distinct values p
 | `JWT_PRIVATE_KEY` | secret | Signing key | Production signing key |
 | `JWT_PUBLIC_KEY` | secret | Matching public key | Matching production public key |
 | `RESEND_API_KEY` | secret | Resend API key | Resend API key for production |
+| `RESEND_FROM_EMAIL` | secret | e.g. <ul><li>`noreply-staging@yourdomain.com`</li><li>`noreply-preview@yourdomain.com`</li></ul> | e.g. `noreply@yourdomain.com` |
 | `FIREBASE_SERVICE_ACCOUNT` | secret | `terraform output -raw firebase_service_account_key_staging \| base64 -d` | `terraform output -raw firebase_service_account_key_prod \| base64 -d` |
-| `RESEND_FROM_EMAIL` | variable | e.g. <ul><li>`noreply-staging@yourdomain.com`</li><li>`noreply-preview@yourdomain.com`</li></ul> | e.g. `noreply@yourdomain.com` |
 | `GOOGLE_CLOUD_PROJECT` | variable |  | `tfcd-prod` |
 
 To generate a JWT key pair (signing and public key) for each environment:
