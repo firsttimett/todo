@@ -1,0 +1,71 @@
+name: Promote to production
+run-name: "[${{ inputs.git_sha || github.event.workflow_run.head_sha }}] Promote to production"
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: "Full or short git SHA to promote (leave empty to promote the latest staging deploy)"
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["Deploy staging"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  validate_sha:
+    name: Validate image exists in Artifact Registry
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      full_sha: ${{ steps.resolve.outputs.full_sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Resolve and validate SHA
+        id: resolve
+        run: |
+          INPUT_SHA="${{ inputs.git_sha || github.event.workflow_run.head_sha || github.sha }}"
+          FULL_SHA=$(git rev-parse "$INPUT_SHA")
+          EXISTS=$(gcloud artifacts docker tags list \
+            asia-southeast1-docker.pkg.dev/tfcd-infra/nnow/backend \
+            --project=tfcd-infra \
+            --filter="tag:$FULL_SHA" \
+            --format="value(tag)" 2>/dev/null || true)
+          if [ -z "$EXISTS" ]; then
+            echo "::error::Image tag '$FULL_SHA' not found in Artifact Registry."
+            echo "::error::Ensure this SHA was deployed to staging before promoting to production."
+            exit 1
+          fi
+          echo "Image confirmed: asia-southeast1-docker.pkg.dev/tfcd-infra/nnow/backend:$FULL_SHA"
+          echo "full_sha=$FULL_SHA" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: [validate_sha]
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
+    with:
+      environment: production
+      frontend_url: https://todo.tfcd.app
+      suffix: prod
+      gcp_project: tfcd-prod
+      terraform_dir: infra/terraform/environments/production
+      firebase_project_id: tfcd-prod
+      git_sha: ${{ needs.validate_sha.outputs.full_sha }}
+      skip_build: true

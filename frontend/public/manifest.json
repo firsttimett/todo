@@ -1,0 +1,16 @@
+{
+  "name": "Not Now",
+  "short_name": "Not Now",
+  "description": "Editorial todo planner for focused daily work.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f0e6",
+  "theme_color": "#b7442d",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}

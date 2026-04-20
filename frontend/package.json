@@ -1,0 +1,44 @@
+{
+  "name": "tfcd-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:stub": "playwright test --config playwright.stub.config.ts",
+    "lint": "eslint src --ext ts,tsx"
+  },
+  "dependencies": {
+    "@preact/signals-react": "^3.10.0",
+    "lucide-react": "^1.7.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-router-dom": "^7.14.0",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.1.0",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "globals": "^17.4.0",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.0",
+    "vite": "^8.0.7",
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^4.1.2"
+  },
+  "_comment_for_overrides": "Using overrides to fix vulnerability",
+  "overrides": {
+    "lodash": "4.18.1",
+    "serialize-javascript": "7.0.5"
+  }
+}

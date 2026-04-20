@@ -1,0 +1,65 @@
+x-common-environment: &common-env
+  ENV_NAME: local
+  GCP_PROJECT: nnow-local
+  FIRESTORE_EMULATOR_HOST: firestore-emulator:8090
+  JWT_ISSUER: nnow-auth
+  JWT_AUDIENCE: nnow-api
+  JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public_key
+  WATCHFILES_FORCE_POLLING: true
+  PYTHONUNBUFFERED: 1
+
+name: nnow-local
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: nnow-app
+    depends_on: [firestore-emulator]
+    volumes:
+      - ./backend/auth:/app/auth
+      - ./backend/shared:/app/shared
+      - ./backend/todo:/app/todo
+      - ./backend/main.py:/app/main.py
+    secrets: [jwt_private_key, jwt_public_key]
+    environment:
+      <<: *common-env
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private_key
+      OTP_BYPASS_CODE: 652093
+    ports: ['127.0.0.1:8080:8080']
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080",
+              "--reload", "--reload-dir", "/app/auth", "--reload-dir", "/app/shared",
+              "--reload-dir", "/app/todo"]
+
+  firestore-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: nnow-firestore
+    volumes:
+      - firestore_data:/root/.config/gcloud
+    ports: ['127.0.0.1:8090:8090']
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8090 --project=nnow-local
+
+  frontend:
+    image: node:24-alpine
+    container_name: nnow-frontend
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend_node_modules:/app/frontend/node_modules
+    environment:
+      - VITE_API_URL=http://app:8080
+      - VITE_USE_POLLING=true
+    ports: ['127.0.0.1:5173:5173']
+    command: sh -c "npm install && npm run dev -- --host"
+    working_dir: /app/frontend
+
+volumes:
+  firestore_data:
+  frontend_node_modules:
+
+secrets:
+  jwt_private_key:
+    file: ./secrets/jwt_private_key.pem
+  jwt_public_key:
+    file: ./secrets/jwt_public_key.pem

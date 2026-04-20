@@ -1,0 +1,114 @@
+name: Deploy preview environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  IMAGE: asia-southeast1-docker.pkg.dev/tfcd-infra/nnow/backend:pr-${{ github.event.number }}
+  TAG: pr-${{ github.event.number }}
+  DB: nnow-pr-${{ github.event.number }}
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  checks: write
+
+jobs:
+  preview:
+    name: Deploy PR preview
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: ${{ steps.firebase-deploy.outputs.details_url }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          project_id: tfcd-infra
+
+      - name: Create Firestore database for PR
+        run: |
+          # Idempotent — safe to re-run on push to existing PR.
+          # Use || {} so set -e doesn't exit before we inspect the output.
+          # "already exists" is a success condition; any other error fails the step.
+          CREATE_OUT=$(gcloud firestore databases create \
+            --database=${{ env.DB }} \
+            --location=asia-southeast1 \
+            --project=tfcd-nonprod \
+            --quiet 2>&1) || {
+            echo "$CREATE_OUT"
+            echo "$CREATE_OUT" | grep -q "already exists"
+          }
+
+      - name: Build and deploy app
+        uses: ./.github/actions/build-deploy-cloudrun
+        with:
+          image: ${{ env.IMAGE }}
+          service: nnow-nonprod
+          project: tfcd-nonprod
+          revision_tag: ${{ env.TAG }}
+          update_env_vars: FIRESTORE_DATABASE=${{ env.DB }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Generate firebase.json (rewrite points to tagged revision)
+        working-directory: frontend
+        run: ENV=staging TAG=${{ env.TAG }} envsubst < firebase.json.tpl > firebase.json
+
+      - name: Deploy preview channel to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        id: firebase-deploy
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: tfcd-nonprod
+          channelId: pr-${{ github.event.number }}
+          expires: 30d
+          entryPoint: frontend
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Warm up Cloud Run revision
+        uses: ./.github/actions/warm-up-revision
+        with:
+          service: nnow-nonprod
+          project: tfcd-nonprod
+          tag: ${{ env.TAG }}
+
+      - name: Run E2E tests against preview channel
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.firebase-deploy.outputs.details_url }}
+          OTP_BYPASS_CODE: ${{ secrets.OTP_BYPASS_CODE }}
+        run: npx playwright test --project=chromium
+
+      - name: Upload Playwright report if there's test failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-pr-${{ github.event.number }}
+          path: frontend/playwright-report/
+          retention-days: 7

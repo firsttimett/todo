@@ -1,0 +1,41 @@
+name: Deploy staging
+run-name: "[${{ github.sha }}] ${{ github.event.head_commit.message }}"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-staging.yml"
+      - ".github/workflows/_deploy.yml"
+      - "infra/terraform/environments/staging/**"
+      - "infra/terraform/modules/**"
+      - "backend/**"
+      - "frontend/**"
+      - "!frontend/src/**/*.test.ts"
+      - "!frontend/e2e/**"
+      - "!frontend/e2e-stub/**"
+      - "!frontend/playwright.config.ts"
+      - "!frontend/playwright.stub.config.ts"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
+    with:
+      environment: staging
+      frontend_url: https://staging.todo.tfcd.app
+      suffix: staging
+      gcp_project: tfcd-nonprod
+      terraform_dir: infra/terraform/environments/staging
+      firebase_project_id: tfcd-nonprod
+      use_otp_bypass: true
+      run_e2e: true
+      git_sha: ${{ github.sha }}

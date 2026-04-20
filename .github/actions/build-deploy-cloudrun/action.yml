@@ -1,0 +1,92 @@
+name: Build and deploy to Cloud Run
+description: >
+  Builds and pushes a Docker image to Artifact Registry, then deploys it as a
+  tagged Cloud Run revision. Handles the first-deploy edge case where
+  --no-traffic is not valid on a new service.
+
+inputs:
+  # ── Required for all environments ────────────────────────────────────────────
+  image:
+    description: Full image reference including tag (e.g. asia-southeast1-docker.pkg.dev/tfcd-infra/nnow/backend:staging)
+    required: true
+  service:
+    description: Cloud Run service name (e.g. nnow-nonprod)
+    required: true
+  project:
+    description: GCP project ID
+    required: true
+  region:
+    description: Cloud Run region
+    required: false
+    default: asia-southeast1
+  revision_tag:
+    description: "Cloud Run revision tag. Use 'new' for staging/production; use 'pr-<N>' for preview."
+    required: true
+
+  # ── Build (preview + staging; set skip_build=true for production) ─────────────
+  dockerfile:
+    description: Path to the Dockerfile relative to the repo root
+    required: false
+    default: backend/Dockerfile
+  skip_build:
+    description: "Skip Docker build/push and deploy an existing image reference. Set to 'true' for production promotion."
+    required: false
+    default: "false"
+
+  # ── Preview-specific ──────────────────────────────────────────────────────────
+  update_env_vars:
+    description: >
+      Comma-separated env var overrides passed to --update-env-vars
+      (e.g. FIRESTORE_DATABASE=nnow-pr-42). Used in preview to point at a per-PR Firestore database.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      if: ${{ inputs.skip_build != 'true' }}
+      uses: docker/setup-buildx-action@v4
+
+    - name: Configure Docker for Artifact Registry
+      if: ${{ inputs.skip_build != 'true' }}
+      shell: bash
+      run: gcloud auth configure-docker ${{ inputs.region }}-docker.pkg.dev --quiet
+
+    - name: Build and push image
+      if: ${{ inputs.skip_build != 'true' }}
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: ${{ inputs.dockerfile }}
+        push: true
+        tags: ${{ inputs.image }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Deploy Cloud Run revision
+      shell: bash
+      run: |
+        # --no-traffic is only valid on an existing service; omit it on first deploy
+        if gcloud run services describe ${{ inputs.service }} \
+            --region ${{ inputs.region }} \
+            --project ${{ inputs.project }} \
+            --quiet 2>/dev/null; then
+          NO_TRAFFIC="--no-traffic"
+        else
+          NO_TRAFFIC=""
+        fi
+
+        UPDATE_ENV_VARS=""
+        if [ -n "${{ inputs.update_env_vars }}" ]; then
+          UPDATE_ENV_VARS="--update-env-vars ${{ inputs.update_env_vars }}"
+        fi
+
+        gcloud run deploy ${{ inputs.service }} \
+          --image ${{ inputs.image }} \
+          --region ${{ inputs.region }} \
+          --project ${{ inputs.project }} \
+          --tag ${{ inputs.revision_tag }} \
+          $UPDATE_ENV_VARS \
+          $NO_TRAFFIC \
+          --quiet

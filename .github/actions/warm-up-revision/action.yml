@@ -1,0 +1,47 @@
+name: Warm up Cloud Run revision
+description: >
+  Fetches the URL for a tagged Cloud Run revision and polls /health until it
+  returns 200. Avoids cold-start timeouts in Playwright (cold starts can exceed
+  the 10s per-test default).
+
+inputs:
+  service:
+    description: Cloud Run service name (e.g. nnow-nonprod)
+    required: true
+  project:
+    description: GCP project ID
+    required: true
+  tag:
+    description: Cloud Run revision tag to warm up (e.g. new, pr-42)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Warm up revision
+      shell: bash
+      run: |
+        REVISION_URL=$(gcloud run services describe ${{ inputs.service }} \
+          --project=${{ inputs.project }} \
+          --region=asia-southeast1 \
+          --format=json \
+          | python3 -c "
+        import sys, json
+        data = json.load(sys.stdin)
+        for t in data.get('status', {}).get('traffic', []):
+            if t.get('tag') == '${{ inputs.tag }}':
+                print(t.get('url', ''))
+                sys.exit(0)
+        ")
+        echo "Revision URL: $REVISION_URL"
+        for i in $(seq 1 20); do
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$REVISION_URL/health" || echo "000")
+          echo "Attempt $i: status=$STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "Backend is ready"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Backend did not become ready in time"
+        exit 1
