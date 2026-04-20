@@ -49,10 +49,16 @@ jobs:
             --format="value(name)" 2>/dev/null || true)
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-          CHANNEL_EXISTS=$(npx firebase-tools@latest hosting:channel:list \
+          npx firebase-tools@latest hosting:channel:list \
             --project tfcd-nonprod \
-            --json 2>/dev/null \
-            | jq -e --arg ch "${{ env.TAG }}" '[.result.channels[]?.name | endswith("/" + $ch)] | any' || true)
+            --json > /tmp/fb_stdout.txt 2> /tmp/fb_stderr.txt || true
+          echo "=== stdout ==="
+          cat /tmp/fb_stdout.txt
+          echo "=== stderr ==="
+          cat /tmp/fb_stderr.txt
+          CHANNEL_EXISTS=$(jq -e --arg ch "${{ env.TAG }}" \
+            '[.result.channels[]?.name | endswith("/" + $ch)] | any' /tmp/fb_stdout.txt || true)
+          echo "CHANNEL_EXISTS=$CHANNEL_EXISTS"
           echo "channel_exists=$([[ "$CHANNEL_EXISTS" == "true" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
       - name: Fail if no resources found
