@@ -51,6 +51,7 @@ jobs:
 
           npx firebase-tools@latest hosting:channel:list \
             --project tfcd-nonprod \
+            --site tfcd-nonprod \
             --json > /tmp/fb_stdout.txt 2> /tmp/fb_stderr.txt || true
           echo "=== stdout ==="
           cat /tmp/fb_stdout.txt
@@ -90,4 +91,5 @@ jobs:
         run: |
           npx firebase-tools@latest hosting:channel:delete ${{ env.TAG }} \
             --project tfcd-nonprod \
+            --site tfcd-nonprod \
             --force
