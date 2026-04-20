@@ -32,7 +32,7 @@ jobs:
     with:
       environment: staging
       frontend_url: https://staging.todo.tfcd.app
-      suffix: staging
+      suffix: nonprod
       gcp_project: tfcd-nonprod
       terraform_dir: infra/terraform/environments/staging
       firebase_project_id: tfcd-nonprod

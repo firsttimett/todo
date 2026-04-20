@@ -86,11 +86,10 @@ cd infra/terraform/environments/base
 terraform init
 ```
 
-Import the manually created `tfcd-infra` project so Terraform manages it. The import and the first apply must pass `-var="resolve_hosting_dns=false"` because the Firebase Hosting CNAME records derive their rdata from `google_firebase_hosting_custom_domain.required_dns_updates`, which is unknown at plan time before the custom domain registrations exist (Terraform rejects count/for_each values that depend on unknowns):
+Import the manually created `tfcd-infra` project so Terraform manages it:
 
 ```bash
 terraform import \
-  -var="resolve_hosting_dns=false" \
   -var="billing_account=<BILLING_ACCOUNT_ID>" \
   -var="github_repo=<owner>/<repo>" \
   google_project.infra tfcd-infra
@@ -103,32 +102,11 @@ Apply APIs first to avoid propagation delays on subsequent resources (e.g. billi
 ```bash
 terraform apply \
   -target=google_project_service.infra_apis \
-  -var="resolve_hosting_dns=false" \
   -var="billing_account=<BILLING_ACCOUNT_ID>" \
   -var="github_repo=<owner>/<repo>"
 ```
 
-Then apply everything else. The first apply creates the Firebase custom domain registrations with `resolve_hosting_dns=false`; subsequent applies run with the default `true` to resolve the two Firebase Hosting CNAMEs from each registration's `required_dns_updates` attribute:
-
-```bash
-terraform apply \
-  -var="resolve_hosting_dns=false" \
-  -var="billing_account=<BILLING_ACCOUNT_ID>" \
-  -var="github_repo=<owner>/<repo>"
-```
-
-Wait for Firebase to populate `required_dns_updates` with the CNAME it wants you to publish. Usually under a minute, but can take a few. Inspect state to confirm before running the next apply:
-
-```bash
-terraform state show google_firebase_hosting_custom_domain.staging \
-  | grep -A 30 'required_dns_updates'
-terraform state show google_firebase_hosting_custom_domain.prod \
-  | grep -A 30 'required_dns_updates'
-```
-
-You should see one CNAME entry per custom domain — `staging.todo.tfcd.app` → `tfcd-nonprod.web.app` and `todo.tfcd.app` → `tfcd-prod.web.app`. Firebase may populate them at different times. (Firebase picks CNAME-based provisioning because both domains are subdomains of the `tfcd.app` zone; apex domains would get A + DNS-01 TXT instead.)
-
-Now apply again to create whichever CNAMEs are ready. Both record resources are each gated on their own derived rdata, so this apply is idempotent — re-run until both CNAMEs exist:
+Then apply everything:
 
 ```bash
 terraform apply \
@@ -136,9 +114,21 @@ terraform apply \
   -var="github_repo=<owner>/<repo>"
 ```
 
-If the plan shows fewer than two DNS records being added, wait a minute, re-run the state-show commands above, and apply again. Once both CNAMEs are live, Firebase issues managed Let's Encrypt certs over HTTP-01 — no further DNS changes required.
+The Firebase Hosting CNAME records (`staging.todo.tfcd.app` → `tfcd-nonprod.web.app`, `todo.tfcd.app` → `tfcd-prod.web.app`) are created unconditionally. Once both CNAMEs are live, Firebase issues managed Let's Encrypt certs over HTTP-01 — no further DNS changes required.
 
-### Capture outputs
+### Enable DNSSEC
+
+DNSSEC is enabled on the Cloud DNS zone by default. After the first `terraform apply`, publish the DS record to the registrar in one step:
+
+```bash
+gcloud domains registrations configure dns tfcd.app \
+  --cloud-dns-zone=projects/tfcd-infra/managedZones/tfcd-app \
+  --project=tfcd-infra
+```
+
+This updates both the nameservers and DS record at the registrar atomically. If using external registrar (not Cloud Domains), can read the DS record value from the Terraform output, and enter the DS record manually.
+
+### Capture outputs for next step
 
 ```bash
 terraform output -raw workload_identity_provider

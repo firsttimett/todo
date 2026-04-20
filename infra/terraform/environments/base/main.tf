@@ -579,6 +579,14 @@ resource "google_clouddomains_registration" "tfcd_app" {
       domain_notices,
       yearly_price,
       contact_settings,
+      # dns_settings: name_servers has ForceNew in the provider, and the Cloud DNS
+      # zone API returns nameservers in a different order/format than Cloud Domains
+      # stores them, causing a perpetual diff that would destroy+recreate the
+      # registration — blocked by prevent_destroy. Nameservers and DS records are
+      # managed out-of-band via:
+      #   gcloud domains registrations configure dns tfcd.app \
+      #     --cloud-dns-zone=projects/tfcd-infra/managedZones/tfcd-app \
+      #     --project=tfcd-infra
       dns_settings,
     ]
   }
@@ -590,57 +598,49 @@ resource "google_dns_managed_zone" "tfcd_app" {
   dns_name    = "tfcd.app."
   description = "Parent DNS zone for tfcd.app"
 
+  dnssec_config {
+    state = "on"
+  }
+
   depends_on = [google_project_service.infra_apis]
+}
+
+data "google_dns_keys" "tfcd_app" {
+  managed_zone = google_dns_managed_zone.tfcd_app.id
+  project      = google_project.infra.project_id
 }
 
 # ---------------------------------------------------------------------------
 # Firebase Hosting DNS records
 #
 # Firebase Hosting serves:
-#   todo.tfcd.app        → production Firebase project (tfcd-prod)
+#   todo.tfcd.app         → production Firebase project (tfcd-prod)
 #   staging.todo.tfcd.app → nonprod Firebase project (tfcd-nonprod)
 #
-# Each subdomain gets a single CNAME pointing at its Firebase project's default
-# Hosting domain (<site-id>.web.app). Firebase picks the CNAME path (instead of
-# A + ACME DNS-01 TXT) because both domains are subdomains of the tfcd.app zone
-# — the CNAME itself delegates control, so Firebase issues managed Let's
-# Encrypt certs over HTTP-01 without needing a DNS-01 challenge.
-#
-# The rdata derives from each google_firebase_hosting_custom_domain's
-# required_dns_updates attribute, so the value stays correct if Firebase ever
-# changes what it prescribes. Creation is gated by var.resolve_hosting_dns
-# because required_dns_updates is unknown at plan time before the custom
-# domain registrations exist, and Terraform rejects count/for_each values that
-# depend on unknowns. During bootstrap set it to false for import and the
-# first apply; the default (true) resolves each record once Firebase has
-# populated the corresponding required_dns_updates entry.
-#
-# The count expressions additionally gate on local content (!= null).
-# required_dns_updates is eventually consistent — Firebase may not publish it
-# immediately on custom domain creation — so the gate lets the second apply be
-# re-run idempotently until both CNAME records appear.
+# Each subdomain gets a CNAME pointing at its Firebase project's default
+# Hosting domain (<project-id>.web.app). The CNAME delegates control so
+# Firebase issues managed Let's Encrypt certs over HTTP-01 without a
+# separate DNS-01 challenge.
 # ---------------------------------------------------------------------------
 
 resource "google_dns_record_set" "firebase_production_cname" {
-  count        = var.resolve_hosting_dns && local.prod_hosting_cname != null ? 1 : 0
   project      = google_project.infra.project_id
   managed_zone = google_dns_managed_zone.tfcd_app.name
   name         = "todo.tfcd.app."
   type         = "CNAME"
   ttl          = 3600
-  rrdatas      = [local.prod_hosting_cname]
+  rrdatas      = ["${google_project.prod.project_id}.web.app."]
 
   depends_on = [google_project_service.infra_apis]
 }
 
 resource "google_dns_record_set" "firebase_staging_cname" {
-  count        = var.resolve_hosting_dns && local.staging_hosting_cname != null ? 1 : 0
   project      = google_project.infra.project_id
   managed_zone = google_dns_managed_zone.tfcd_app.name
   name         = "staging.todo.tfcd.app."
   type         = "CNAME"
   ttl          = 3600
-  rrdatas      = [local.staging_hosting_cname]
+  rrdatas      = ["${google_project.nonprod.project_id}.web.app."]
 
   depends_on = [google_project_service.infra_apis]
 }
@@ -661,37 +661,6 @@ resource "google_firebase_hosting_custom_domain" "staging" {
     # cert issuance can churn these fields; don't fight the API on subsequent plans
     ignore_changes = [cert_preference, redirect_target]
   }
-}
-
-# DNS rdata derived from each custom_domain resource's required_dns_updates
-# attribute — Firebase prescribes a single CNAME per subdomain pointing at the
-# default Firebase Hosting domain (<site-id>.web.app). No separate ACME DNS-01
-# challenge is needed: the CNAME delegates the subdomain to Firebase, which
-# uses that delegation to issue managed Let's Encrypt certs over HTTP-01.
-# Reading from the resource (rather than hardcoding) keeps the value correct if
-# Firebase ever changes what it prescribes, and the trailing "." is appended
-# because Cloud DNS requires FQDN form in CNAME rdata. try(..., null) falls
-# back when the custom domain resource isn't in state or Firebase hasn't
-# populated the field yet; the consuming resources gate their count on both
-# var.resolve_hosting_dns and local content (see section header above).
-locals {
-  staging_hosting_cname = try("${one([
-    for r in flatten([
-      for rec in flatten([
-        for u in google_firebase_hosting_custom_domain.staging.required_dns_updates : u.desired
-      ]) : rec.records
-      if rec.domain_name == "staging.todo.tfcd.app"
-    ]) : r.rdata if r.type == "CNAME"
-  ])}.", null)
-
-  prod_hosting_cname = try("${one([
-    for r in flatten([
-      for rec in flatten([
-        for u in google_firebase_hosting_custom_domain.prod.required_dns_updates : u.desired
-      ]) : rec.records
-      if rec.domain_name == "todo.tfcd.app"
-    ]) : r.rdata if r.type == "CNAME"
-  ])}.", null)
 }
 
 # Firebase Hosting custom domain registration for todo.tfcd.app (production).
@@ -797,4 +766,9 @@ output "firebase_service_account_key_prod" {
   description = "Base64-encoded JSON key for production — store as FIREBASE_SERVICE_ACCOUNT in the 'production' GitHub environment."
   value       = google_service_account_key.firebase_cicd_prod.private_key
   sensitive   = true
+}
+
+output "dnssec_ds_record" {
+  description = "DS record for tfcd.app — publish to the registrar after DNSSEC is enabled on the zone: gcloud domains registrations configure dns tfcd.app --cloud-dns-zone=projects/tfcd-infra/managedZones/tfcd-app --project=tfcd-infra"
+  value       = try(data.google_dns_keys.tfcd_app.key_signing_keys[0].ds_record, "DNSSEC not yet active — run terraform apply again after the zone update.")
 }
