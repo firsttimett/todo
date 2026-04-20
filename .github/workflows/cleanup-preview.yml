@@ -34,7 +34,35 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: tfcd-infra
 
+      - name: Check preview resources exist
+        id: check
+        run: |
+          TAG_COUNT=$(gcloud run services describe nnow-nonprod \
+            --region asia-southeast1 \
+            --project tfcd-nonprod \
+            --format="value(status.traffic[].tag)" | grep -c "^${{ env.TAG }}$" || true)
+          echo "tag_exists=$([[ $TAG_COUNT -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+          DB_NAME=$(gcloud firestore databases describe \
+            --database=${{ env.DB }} \
+            --project=tfcd-nonprod \
+            --format="value(name)" 2>/dev/null || true)
+          echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+          CHANNEL_EXISTS=$(npx firebase-tools@latest hosting:channel:list \
+            --project tfcd-nonprod \
+            --json \
+            | jq -e --arg ch "${{ env.TAG }}" '.result.channels[]?.name | endswith("/" + $ch)' 2>/dev/null || true)
+          echo "channel_exists=$([[ "$CHANNEL_EXISTS" == "true" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Fail if no resources found
+        if: steps.check.outputs.tag_exists == 'false' && steps.check.outputs.db_exists == 'false' && steps.check.outputs.channel_exists == 'false'
+        run: |
+          echo "No preview resources found for ${{ env.TAG }}. Invalid PR number or already cleaned up."
+          exit 1
+
       - name: Remove Cloud Run revision tag
+        if: steps.check.outputs.tag_exists == 'true'
         # Removes the tag (untagged revisions are still retained by Cloud Run GC policy)
         run: |
           gcloud run services update-traffic nnow-nonprod \
@@ -44,6 +72,7 @@ jobs:
             --quiet
 
       - name: Delete PR Firestore database
+        if: steps.check.outputs.db_exists == 'true'
         run: |
           gcloud firestore databases delete \
             --database=${{ env.DB }} \
@@ -51,7 +80,8 @@ jobs:
             --quiet
 
       - name: Remove Firebase Hosting preview channel
+        if: steps.check.outputs.channel_exists == 'true'
         run: |
-          npx firebase-tools@latest hosting:channel:delete pr-${{ github.event.number }} \
+          npx firebase-tools@latest hosting:channel:delete ${{ env.TAG }} \
             --project tfcd-nonprod \
             --force
