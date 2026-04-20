@@ -49,10 +49,13 @@ jobs:
             --format="value(name)" 2>/dev/null || true)
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-          CHANNEL_EXISTS=$(curl -sf \
+          HTTP_STATUS=$(curl -s -o /tmp/fb_response.txt -w "%{http_code}" \
             -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-            "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}" \
-            > /dev/null && echo true || echo false)
+            -H "x-goog-user-project: tfcd-nonprod" \
+            "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
+          echo "HTTP status: $HTTP_STATUS"
+          cat /tmp/fb_response.txt
+          CHANNEL_EXISTS=$([[ "$HTTP_STATUS" == "200" ]] && echo true || echo false)
           echo "channel_exists=$CHANNEL_EXISTS" >> $GITHUB_OUTPUT
 
       - name: Fail if no resources found
@@ -84,4 +87,5 @@ jobs:
         run: |
           curl -sf -X DELETE \
             -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "x-goog-user-project: tfcd-nonprod" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}"
