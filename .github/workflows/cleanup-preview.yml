@@ -51,8 +51,8 @@ jobs:
 
           CHANNEL_EXISTS=$(npx firebase-tools@latest hosting:channel:list \
             --project tfcd-nonprod \
-            --json \
-            | jq -e --arg ch "${{ env.TAG }}" '[.result.channels[]?.name | endswith("/" + $ch)] | any' 2>/dev/null || true)
+            --json 2>/dev/null \
+            | jq -e --arg ch "${{ env.TAG }}" '[.result.channels[]?.name | endswith("/" + $ch)] | any' || true)
           echo "channel_exists=$([[ "$CHANNEL_EXISTS" == "true" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
       - name: Fail if no resources found
