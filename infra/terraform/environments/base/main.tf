@@ -7,27 +7,30 @@ locals {
   prod_project_id    = "tfcd-prod"
   env_project_ids    = [local.nonprod_project_id, local.prod_project_id]
 
-  required_apis = toset([
+  # APIs for env projects (nonprod + prod) only — app workloads.
+  env_apis = toset([
     "run.googleapis.com",
     "firestore.googleapis.com",
-    "storage.googleapis.com", # Terraform state bucket (tfcd-infra only)
     "artifactregistry.googleapis.com",
+    "iam.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "firebase.googleapis.com",
+    "firebasehosting.googleapis.com",
+    "secretmanager.googleapis.com",
+  ])
+
+  # APIs for tfcd-infra only — shared infrastructure, no app workloads.
+  infra_apis = toset([
+    "artifactregistry.googleapis.com",
+    "storage.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "dns.googleapis.com",
-    "firebase.googleapis.com",        # Firebase project activation
-    "firebasehosting.googleapis.com", # Firebase Hosting (staging + prod)
-  ])
-
-  # These APIs are only needed on the infra project:
-  # - billingbudgets: for the budget alert resource
-  # - serviceusage: required when user_project_override = true routes quota through tfcd-infra
-  infra_apis = toset(concat(tolist(local.required_apis), [
     "billingbudgets.googleapis.com",
-    "serviceusage.googleapis.com",
+    "serviceusage.googleapis.com", # required when user_project_override = true routes quota through tfcd-infra
     "domains.googleapis.com",
-  ]))
+  ])
 
   # ---------------------------------------------------------------------------
   # CI/CD IAM — GitHub Actions WIF principal
@@ -56,6 +59,7 @@ locals {
     "roles/iam.serviceAccountAdmin",
     "roles/resourcemanager.projectIamAdmin",
     "roles/iam.serviceAccountUser",
+    "roles/secretmanager.admin",
   ])
 
   # ---------------------------------------------------------------------------
@@ -151,7 +155,7 @@ resource "google_project_service" "env_apis" {
   for_each = {
     for pair in flatten([
       for project in local.env_project_ids : [
-        for api in local.required_apis : { project = project, api = api }
+        for api in local.env_apis : { project = project, api = api }
       ]
     ]) : "${pair.project}/${pair.api}" => pair
   }
