@@ -20,6 +20,73 @@ resource "google_firestore_database" "main" {
 }
 
 # ---------------------------------------------------------------------------
+# Secret Manager — sensitive config stored here instead of Cloud Run env vars
+# so values are not visible in revision metadata. Note: secret data still
+# passes through Terraform state (GCS); rotate via new secret versions.
+# ---------------------------------------------------------------------------
+
+resource "google_secret_manager_secret" "jwt_private_key" {
+  project   = var.project_id
+  secret_id = "${local.app_service_name}-jwt-private-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "jwt_private_key" {
+  secret      = google_secret_manager_secret.jwt_private_key.id
+  secret_data = var.jwt_private_key
+}
+
+resource "google_secret_manager_secret" "jwt_public_key" {
+  project   = var.project_id
+  secret_id = "${local.app_service_name}-jwt-public-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "jwt_public_key" {
+  secret      = google_secret_manager_secret.jwt_public_key.id
+  secret_data = var.jwt_public_key
+}
+
+resource "google_secret_manager_secret" "resend_api_key" {
+  project   = var.project_id
+  secret_id = "${local.app_service_name}-resend-api-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "resend_api_key" {
+  secret      = google_secret_manager_secret.resend_api_key.id
+  secret_data = var.resend_api_key
+}
+
+# Grant the Cloud Run SA read access to each secret
+resource "google_secret_manager_secret_iam_member" "jwt_private_key" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.jwt_private_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "jwt_public_key" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.jwt_public_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "resend_api_key" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.resend_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
+# ---------------------------------------------------------------------------
 # Cloud Run — unified app service (auth + todo)
 #
 # Ingress is set to INGRESS_TRAFFIC_ALL so Firebase Hosting rewrites can
@@ -61,21 +128,38 @@ resource "google_cloud_run_v2_service" "app" {
         value = local.firestore_db
       }
       env {
-        name  = "JWT_PRIVATE_KEY"
-        value = var.jwt_private_key
-      }
-      env {
-        name  = "JWT_PUBLIC_KEY"
-        value = var.jwt_public_key
-      }
-      env {
-        name  = "RESEND_API_KEY"
-        value = var.resend_api_key
-      }
-      env {
         name  = "RESEND_FROM_EMAIL"
         value = var.resend_from_email
       }
+
+      env {
+        name = "JWT_PRIVATE_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.jwt_private_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "JWT_PUBLIC_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.jwt_public_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "RESEND_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.resend_api_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+
       env {
         name  = "OTP_BYPASS_CODE"
         value = var.otp_bypass_code
@@ -94,7 +178,15 @@ resource "google_cloud_run_v2_service" "app" {
     }
   }
 
-  depends_on = [google_firestore_database.main]
+  depends_on = [
+    google_firestore_database.main,
+    google_secret_manager_secret_version.jwt_private_key,
+    google_secret_manager_secret_version.jwt_public_key,
+    google_secret_manager_secret_version.resend_api_key,
+    google_secret_manager_secret_iam_member.jwt_private_key,
+    google_secret_manager_secret_iam_member.jwt_public_key,
+    google_secret_manager_secret_iam_member.resend_api_key,
+  ]
 
   lifecycle {
     ignore_changes = [

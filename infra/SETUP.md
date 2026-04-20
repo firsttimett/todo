@@ -20,7 +20,7 @@ infra/terraform/
 
 **Secrets/envs flow**
 
-GitHub secrets/vars → TF_VAR_* env vars → Terraform apply → Cloud Run env vars 
+GitHub secrets/vars → TF_VAR_* env vars → Terraform apply → Secret Manager → Cloud Run (via `secret_key_ref`)
 
 # Infrastructure Setup
 

@@ -26,7 +26,9 @@ A todo application built on Google Cloud Platform, with passwordless auth, infra
                             └─────────────────────┘
 ```
 
-Firebase Hosting serves the frontend and rewrites `/api/**` to a single Cloud Run service that handles both auth and todo routes. Firebase handles SSL, CDN, and routing, so no need to manage a load balancer. The frontend and API share the same domain, so no CORS configuration is needed.
+Firebase Hosting serves the frontend and rewrites `/api/**` to a single Cloud Run service that handles both auth and todo routes. The frontend and API share the same domain, so no CORS configuration is needed.
+
+> **No load balancer:** Cloud Run uses `INGRESS_TRAFFIC_ALL`, so Firebase Hosting rewrites reach it directly. The trade-off: the `*.run.app` URL remains publicly reachable, bypassing Firebase's edge entirely. The more secure setup — GCP HTTPS LB + Serverless NEG (`INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`) — would close that bypass and add Cloud Armor (WAF/DDoS), but a forwarding rule costs ~$18.25/month regardless of traffic.
 
 ## Services
 

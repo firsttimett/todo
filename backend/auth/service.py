@@ -18,7 +18,6 @@ from shared.models import User
 USER_PROFILE_FIELDS = ("email", "name", "picture")
 
 OTP_EXPIRE_MINUTES = 10
-_OTP_BYPASS_CODE = os.environ.get("OTP_BYPASS_CODE", "")
 
 
 def _user_profile(data: dict[str, Any]) -> dict[str, object]:
@@ -35,7 +34,12 @@ def _hash_otp(code: str) -> str:
 
 async def create_otp(db: firestore.AsyncClient, email: str) -> str:
     """Generate a 6-digit OTP, store the hash in Firestore, and return the plaintext code."""
-    code = _OTP_BYPASS_CODE or f"{secrets.randbelow(1_000_000):06d}"
+    # Only use OTP bypass code for non-production environments
+    env_name = os.environ.get("ENV_NAME", "local").strip().lower()
+    bypass_code = os.environ.get("OTP_BYPASS_CODE", "").strip()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    if not env_name.startswith("prod") and bypass_code:
+        code = bypass_code
     expires_at = datetime.now(tz=timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)
 
     # Using email as doc ID ensures only one active OTP per email at a time
