@@ -29,12 +29,10 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
-        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: tfcd-infra
-          token_format: access_token
 
       - name: Check preview resources exist
         id: check
@@ -51,9 +49,12 @@ jobs:
             --format="value(name)" 2>/dev/null || true)
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
+          # Impersonate firebase-cicd-nonprod for the Firebase Hosting API —
+          # the WIF principal itself has no firebasehosting.* roles.
+          FB_TOKEN=$(gcloud auth print-access-token \
+            --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com)
           HTTP_STATUS=$(curl -s -o /tmp/fb_response.txt -w "%{http_code}" \
-            -H "Authorization: Bearer $(echo ${{ steps.auth.outputs.access_token }})" \
-            -H "x-goog-user-project: tfcd-nonprod" \
+            -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
           echo "HTTP status: $HTTP_STATUS"
           cat /tmp/fb_response.txt
@@ -87,7 +88,8 @@ jobs:
       - name: Remove Firebase Hosting preview channel
         if: steps.check.outputs.channel_exists == 'true'
         run: |
+          FB_TOKEN=$(gcloud auth print-access-token \
+            --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com)
           curl -sf -X DELETE \
-            -H "Authorization: Bearer $(echo ${{ steps.auth.outputs.access_token }})" \
-            -H "x-goog-user-project: tfcd-nonprod" \
+            -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}"

@@ -367,6 +367,16 @@ resource "google_service_account_key" "firebase_cicd_nonprod" {
   service_account_id = google_service_account.firebase_cicd_nonprod.name
 }
 
+# Allow the GitHub Actions WIF principal to impersonate firebase-cicd-nonprod.
+# Used by cleanup-preview.yml to call the Firebase Hosting REST API with a
+# token that has firebasehosting.admin, avoiding the need for a JSON key
+# in that workflow (FirebaseExtended/action-hosting-deploy still uses the key).
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_wif_impersonation" {
+  service_account_id = google_service_account.firebase_cicd_nonprod.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.wif_repo
+}
+
 resource "google_service_account_key" "firebase_cicd_prod" {
   service_account_id = google_service_account.firebase_cicd_prod.name
 }
