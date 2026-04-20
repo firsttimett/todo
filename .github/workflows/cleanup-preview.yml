@@ -29,10 +29,12 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
+        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: tfcd-infra
+          token_format: access_token
 
       - name: Check preview resources exist
         id: check
@@ -50,7 +52,7 @@ jobs:
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
           HTTP_STATUS=$(curl -s -o /tmp/fb_response.txt -w "%{http_code}" \
-            -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+            -H "Authorization: Bearer $(echo ${{ steps.auth.outputs.access_token }})" \
             -H "x-goog-user-project: tfcd-nonprod" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
           echo "HTTP status: $HTTP_STATUS"
@@ -86,6 +88,6 @@ jobs:
         if: steps.check.outputs.channel_exists == 'true'
         run: |
           curl -sf -X DELETE \
-            -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+            -H "Authorization: Bearer $(echo ${{ steps.auth.outputs.access_token }})" \
             -H "x-goog-user-project: tfcd-nonprod" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}"
