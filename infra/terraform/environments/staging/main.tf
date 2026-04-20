@@ -4,7 +4,7 @@ module "env" {
   env_name              = "nonprod"
   service_account_email = "nnow-nonprod-sa@tfcd-nonprod.iam.gserviceaccount.com"
   min_instances         = 0
-  max_instances         = 10
+  max_instances         = 1
   jwt_public_key        = var.jwt_public_key
   jwt_private_key       = var.jwt_private_key
   resend_api_key        = var.resend_api_key
