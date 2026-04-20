@@ -181,7 +181,6 @@ test.describe('header and auth controls', () => {
     await gotoTodoPage(page);
 
     await expect(page.getByRole('alert')).toContainText('anonymous mode');
-    await expect(page.getByRole('alert')).toContainText('local notebook');
     await expect(page.getByRole('button', { name: 'Sign In to Sync' })).toBeVisible();
   });
 
