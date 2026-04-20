@@ -45,7 +45,8 @@ jobs:
 
       - name: Delete PR Firestore database
         run: |
-          gcloud firestore databases delete ${{ env.DB }} \
+          gcloud firestore databases delete \
+            --database=${{ env.DB }} \
             --project=tfcd-nonprod \
             --quiet
 
