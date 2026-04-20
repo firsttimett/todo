@@ -70,7 +70,7 @@ export function TodoPageHeader({
         {isAnonymous && (
           <div className="todo-anon-controls">
             <span className="todo-anon-status" role="alert">
-              anonymous mode · local notebook
+              anonymous mode
             </span>
             <button
               className="btn btn-primary btn-sm todo-anon-sync-btn"
