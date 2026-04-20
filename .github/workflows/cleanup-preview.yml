@@ -49,18 +49,11 @@ jobs:
             --format="value(name)" 2>/dev/null || true)
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-          npx firebase-tools@latest hosting:channel:list \
-            --project tfcd-nonprod \
-            --site tfcd-nonprod \
-            --json > /tmp/fb_stdout.txt 2> /tmp/fb_stderr.txt || true
-          echo "=== stdout ==="
-          cat /tmp/fb_stdout.txt
-          echo "=== stderr ==="
-          cat /tmp/fb_stderr.txt
-          CHANNEL_EXISTS=$(jq -e --arg ch "${{ env.TAG }}" \
-            '[.result.channels[]?.name | endswith("/" + $ch)] | any' /tmp/fb_stdout.txt || true)
-          echo "CHANNEL_EXISTS=$CHANNEL_EXISTS"
-          echo "channel_exists=$([[ "$CHANNEL_EXISTS" == "true" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          CHANNEL_EXISTS=$(curl -sf \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}" \
+            > /dev/null && echo true || echo false)
+          echo "channel_exists=$CHANNEL_EXISTS" >> $GITHUB_OUTPUT
 
       - name: Fail if no resources found
         if: steps.check.outputs.tag_exists == 'false' && steps.check.outputs.db_exists == 'false' && steps.check.outputs.channel_exists == 'false'
@@ -89,7 +82,6 @@ jobs:
       - name: Remove Firebase Hosting preview channel
         if: steps.check.outputs.channel_exists == 'true'
         run: |
-          npx firebase-tools@latest hosting:channel:delete ${{ env.TAG }} \
-            --project tfcd-nonprod \
-            --site tfcd-nonprod \
-            --force
+          curl -sf -X DELETE \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}"
