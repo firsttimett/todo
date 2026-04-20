@@ -53,11 +53,9 @@ jobs:
           # the WIF principal itself has no firebasehosting.* roles.
           FB_TOKEN=$(gcloud auth print-access-token \
             --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com)
-          HTTP_STATUS=$(curl -s -o /tmp/fb_response.txt -w "%{http_code}" \
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
-          echo "HTTP status: $HTTP_STATUS"
-          cat /tmp/fb_response.txt
           CHANNEL_EXISTS=$([[ "$HTTP_STATUS" == "200" ]] && echo true || echo false)
           echo "channel_exists=$CHANNEL_EXISTS" >> $GITHUB_OUTPUT
 
