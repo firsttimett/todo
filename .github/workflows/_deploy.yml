@@ -314,7 +314,7 @@ jobs:
           echo "Health: OK"
 
           # Expect 401 without a token — 5xx or connection error means something is wrong
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REVISION_URL/todos" || echo "000")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REVISION_URL/api/todo/todos" || echo "000")
           [ "$STATUS" = "401" ] || { echo "Auth guard failed: expected 401, got $STATUS"; exit 1; }
           echo "Auth guard: OK"
 
