@@ -405,7 +405,11 @@ jobs:
     # Rolls back Cloud Run traffic to the previous revision if any poll fails.
     # Cloud Monitoring 5xx-rate check is a future enhancement once revision-level
     # metric filtering and IAM permissions are verified.
-    if: inputs.environment == 'production'
+    #
+    # always() is required: e2e is skipped for production, and GitHub Actions
+    # propagates skip status transitively through the dependency chain. Without
+    # always(), this job is skipped even though release succeeded.
+    if: always() && inputs.environment == 'production' && needs.release.result == 'success'
     runs-on: ubuntu-latest
     needs: [release]
     environment:
