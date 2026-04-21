@@ -19,6 +19,13 @@ locals {
     "secretmanager.googleapis.com",
   ])
 
+  # run.viewer lets Firebase validate Cloud Run rewrite targets in firebase.json before uploading.
+  # Applicable to both nonprod and prod
+  firebase_cicd_roles = toset([
+    "roles/firebasehosting.admin",
+    "roles/run.viewer",
+  ])
+
   # APIs for tfcd-infra only — shared infrastructure, no app workloads.
   infra_apis = toset([
     "artifactregistry.googleapis.com",
@@ -344,12 +351,7 @@ resource "google_service_account" "firebase_cicd_prod" {
 }
 
 resource "google_project_iam_member" "firebase_cicd_nonprod" {
-  for_each = toset([
-    "roles/firebasehosting.admin",
-    # run.viewer is required so Firebase Hosting can validate the Cloud Run
-    # service exists when deploying versions with Cloud Run rewrites.
-    "roles/run.viewer",
-  ])
+  for_each   = local.firebase_cicd_roles
   project    = google_project.nonprod.project_id
   role       = each.value
   member     = "serviceAccount:${google_service_account.firebase_cicd_nonprod.email}"
@@ -357,8 +359,9 @@ resource "google_project_iam_member" "firebase_cicd_nonprod" {
 }
 
 resource "google_project_iam_member" "firebase_cicd_prod" {
+  for_each   = local.firebase_cicd_roles
   project    = google_project.prod.project_id
-  role       = "roles/firebasehosting.admin"
+  role       = each.value
   member     = "serviceAccount:${google_service_account.firebase_cicd_prod.email}"
   depends_on = [google_firebase_project.prod]
 }
