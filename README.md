@@ -5,25 +5,25 @@ A todo application built on Google Cloud Platform, with passwordless auth, infra
 ## Architecture Overview
 
 ```
-                            ┌─────────────────────────────────────────────┐
-                            │            Firebase Hosting                 │
-                            │        (CDN + Hosting + Rewrites)           │
-                            └──────────────┬──────────────────────────────┘
-                                           │
-                              /api/**      │      /**
-                                  ┌────────┴─────────┐
-                                  │                  │
-                            ┌─────▼───────┐   ┌─────▼──────────┐
-                            │   Backend   │   │ Static Files   │
-                            │ (Cloud Run) │   │ (index.html,   │
-                            │   :8080     │   │  assets, etc.) │
-                            └─────┬───────┘   └────────────────┘
-                                  │
-                            ┌─────▼───────────────┐
-                            │      Firestore      │
-                            │ users │ login_otps  │
-                            │       │ todos       │
-                            └─────────────────────┘
+                ┌─────────────────────────────────────────────┐
+                │            Firebase Hosting                 │
+                │        (CDN + Hosting + Rewrites)           │
+                └──────────────┬──────────────────────────────┘
+                               │
+                  /api/**      │      /**
+                      ┌────────┴─────────┐
+                      │                  │
+                ┌─────▼───────┐    ┌─────▼──────────┐
+                │   Backend   │    │ Static Files   │
+                │ (Cloud Run) │    │ (index.html,   │
+                │   :8080     │    │  assets, etc.) │
+                └─────┬───────┘    └────────────────┘
+                      │
+                ┌─────▼───────────────┐
+                │      Firestore      │
+                │ users │ login_otps  │
+                │       │ todos       │
+                └─────────────────────┘
 ```
 
 Firebase Hosting serves the frontend and rewrites `/api/**` to a single Cloud Run service that handles both auth and todo routes. The frontend and API share the same domain, so no CORS configuration is needed.
@@ -37,6 +37,10 @@ Firebase Hosting serves the frontend and rewrites `/api/**` to a single Cloud Ru
 A single FastAPI app wiring both the auth and todo routers, deployed as one Cloud Run service. Auth logic lives in `backend/auth/`, todo logic in `backend/todo/`, shared models and JWT helpers in `backend/shared/`.
 
 **Auth flow:**
+
+<details>
+<summary>6-step passwordless auth</summary>
+
 1. User submits their email
 2. Auth service generates a 6-digit code, hashes it, stores it in Firestore with a 10-minute TTL
 3. Code is sent via [Resend](https://resend.com) email API
@@ -44,16 +48,22 @@ A single FastAPI app wiring both the auth and todo routers, deployed as one Clou
 5. Auth service verifies the hash, creates a user record if new, issues a JWT access token (15 min) and a refresh token (7 days, HTTP-only cookie)
 6. On token expiry, the frontend silently calls `/auth/refresh` — the cookie is sent automatically
 
+</details>
+
 **Todo:**
 
 CRUD for todo items. Validates JWTs using the shared public key — no service-to-service calls needed.
 
-**Data model highlights:**
+<details>
+<summary>Data model highlights</summary>
+
 - Todos live in per-user Firestore subcollections: `users/{user_id}/todos/{todo_id}`
 - Schema fields: subtasks, reminders, recurrence, priority, labels, multiple status states (`inbox`, `today`, `upcoming`, `anytime`, `someday`, `completed`)
 - Sorting is deterministic: `sort_order` → `completed` → `deadline` → `created_at` → `id`
 
 Firestore subcollections per user give structural tenant isolation, though only at the data layer — a query on `users/alice/todos` can never accidentally return Bob's data, not just a WHERE clause away from leaking. The trade-off: cross-user queries for analytics (like "all todos due today across all users") are inefficient without a collection group index, but a personal todo app doesn't need that.
+
+</details>
 
 ### Frontend (`frontend/`)
 
@@ -81,6 +91,9 @@ Also experimenting with **Preact Signals** for state and the **Vite PWA plugin**
 | **Testing** | pytest + Vitest + Playwright | Unit + integration + E2E across the stack |
 
 ## Project Structure
+
+<details>
+<summary>Directory tree</summary>
 
 ```
 .
@@ -120,6 +133,8 @@ Also experimenting with **Preact Signals** for state and the **Vite PWA plugin**
 ├── Makefile                    # Developer commands
 └── pyproject.toml              # Root Python config (Ruff, MyPy)
 ```
+
+</details>
 
 ## Getting Started
 
@@ -240,6 +255,9 @@ Not every change needs every check. The CI pipeline uses [dorny/paths-filter](ht
 
 ### PR Preview Environments
 
+<details>
+<summary>How preview environments work</summary>
+
 Open a pull request and get a temporary environment automatically:
 
 - A per-PR Firestore database (`nnow-pr-{number}`) is created
@@ -249,17 +267,25 @@ Open a pull request and get a temporary environment automatically:
 
 On PR close, `cleanup-preview.yml` removes the revision tag, the per-PR Firestore database, and the hosting channel.
 
+</details>
+
 ### Infrastructure Drift Detection
 
+<details>
+<summary>How drift detection works</summary>
+
 `terraform-drift-check.yml` runs `terraform plan` against both staging and production every weekday at 09:00 UTC. If the plan shows changes (exit code 2), the workflow fails and posts the diff to the job summary. This catches out-of-band manual changes before they cause a surprise during the next deploy. Can also be triggered manually via `workflow_dispatch`.
+
+</details>
 
 ### Deployment Strategy
 
 Deployments follow a blue-green pattern: new revisions are deployed with `--no-traffic`, then traffic is flipped in a separate step. This means if the new revision fails to start, zero users are affected; smoke/E2E tests run against it before any real traffic arrives; and rollback is a traffic update — Cloud Run retains old revisions until its GC policy removes them.
 
-The promotion model is trunk-based and same-artifact: staging is the only place code is built; production is a redeploy of the exact `:<git-sha>` image that passed staging.
+The promotion model is trunk-based and same-artifact: every image is built from a main commit on the way to staging, and production is a redeploy of the exact :<git-sha> image that passed staging — never a rebuild.
 
-**Staging** (auto, on every merge to `main`):
+<details>
+<summary>Staging steps (auto, on every merge to `main`)</summary>
 
 1. **Provision** — Terraform applies any infrastructure changes
 2. **Build** — Docker image built, pushed to Artifact Registry tagged `:<git-sha>`
@@ -268,7 +294,10 @@ The promotion model is trunk-based and same-artifact: staging is the only place 
 5. **Flip** — Traffic switched to the new revision only if E2E passed
 6. **Frontend** — Built and deployed to Firebase Hosting live channel
 
-**Production** (auto-triggered on staging success, or manually via `workflow_dispatch`):
+</details>
+
+<details>
+<summary>Production steps (auto-triggered on staging success, or manually via `workflow_dispatch`)</summary>
 
 1. **Validate** — SHA is resolved (short or full accepted) and confirmed to exist in Artifact Registry
 2. **Plan** — Terraform plan runs and output is posted to the job summary for review
@@ -282,11 +311,15 @@ The promotion model is trunk-based and same-artifact: staging is the only place 
 
 To promote a specific SHA (e.g., to skip a bad commit), trigger `deploy-production.yml` manually via `workflow_dispatch` and provide the SHA — short or full, copied from the staging deploy run name.
 
+</details>
+
 **GitHub environments and secrets** are configured once per repo — four environments (`staging`, `preview`, `production`, `production-gate`), a handful of repo-level secrets, and per-environment JWT/Resend/Firebase values. See [`infra/SETUP.md#step-2--configure-github-repository`](infra/SETUP.md#step-2--configure-github-repository) for the full list and reviewer rules.
 
 ### Rollback
 
-Trigger `rollback.yml` from the Actions UI. Select the environment and optionally a specific Cloud Run revision (defaults to the previous one). The workflow rolls back both Cloud Run traffic and Firebase Hosting in one step.
+**Prefer a git revert.** Revert the bad commit on `main` and let the normal pipeline redeploy — this keeps git history as the source of truth, avoids drift between `main` and what's actually running, and means the next deploy won't silently re-ship the broken revision.
+
+**Use `rollback.yml` only when speed matters more than history** (e.g., production is actively broken and a revert + full pipeline would take too long). Trigger it from the Actions UI, select the environment, and optionally pick a specific Cloud Run revision (defaults to the previous one). The workflow flips Cloud Run traffic and Firebase Hosting in one step. Follow up with a revert PR once the fire is out, so `main` matches production.
 
 Production rollback requires approval via the `production-gate` GitHub environment — the same reviewer gate used for Terraform apply during deploys.
 
@@ -327,6 +360,9 @@ Firebase Hosting custom domain registration, DNS A records, and ACME challenge T
 
 ### Token Lifecycle
 
+<details>
+<summary>Token flow reference</summary>
+
 ```
 Login:    email → OTP code → access_token (15 min) + refresh_token (7 days, cookie)
 Use:      Authorization: Bearer <access_token>
@@ -334,7 +370,12 @@ Refresh:  POST /auth/refresh (cookie sent automatically) → new access_token
 Logout:   POST /auth/logout → cookie cleared
 ```
 
+</details>
+
 ### Security Model
+
+<details>
+<summary>Security decisions and rationale</summary>
 
 - **JWT signing:** Ed25519 (EdDSA) — the todo service only needs the public key to verify tokens, never sees the private key
 - **Access token lifetime:** 15 minutes — short-lived tokens limit the damage window if one is stolen; the refresh token handles silent renewal
@@ -343,3 +384,5 @@ Logout:   POST /auth/logout → cookie cleared
 - **User isolation:** Firestore subcollection structure (`users/{uid}/todos`) makes cross-user data access structurally impossible
 - **GCP auth:** Workload Identity Federation — no long-lived service account keys
 - **Ingress:** Cloud Run service is `INGRESS_TRAFFIC_ALL` — Firebase Hosting rewrites routes to it directly; no load balancer needed
+
+</details>
