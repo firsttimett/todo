@@ -1,4 +1,5 @@
 [tool.ruff]
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
@@ -13,6 +14,14 @@ select = [
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
     "TCH",    # flake8-type-checking
+    "S",      # flake8-bandit (security)
+    "DTZ",    # flake8-datetimez (timezone-aware datetimes)
+    "PERF",   # perflint (performance anti-patterns)
+    "RUF",    # Ruff-specific rules
+    "T20",    # flake8-print (no stray print() calls)
+    "PIE",    # flake8-pie (misc lints)
+    "RET",    # flake8-return (return statement clarity)
+    "PT",     # flake8-pytest-style
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
@@ -23,6 +32,10 @@ runtime-evaluated-base-classes = ["pydantic.BaseModel"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/routes.py" = ["TC001", "TC002"]
+"**/tests/**" = ["S101", "S105", "S106"]  # assert and hardcoded test credentials are fine in tests
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
@@ -34,8 +47,10 @@ strict = true
 warn_redundant_casts = true
 warn_return_any = true
 warn_unused_ignores = true
+warn_unreachable = true
+local_partial_types = true
 
 [[tool.mypy.overrides]]
-module = ["google.*", "uvicorn.*"]
+module = ["google.*"]
 ignore_missing_imports = true
 

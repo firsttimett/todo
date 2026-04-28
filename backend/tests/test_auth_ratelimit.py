@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from auth import service
@@ -18,7 +18,7 @@ def test_verify_otp_uses_hmac_compare_digest() -> None:
 # ── _compute_limit (pure sliding-window logic) ────────────────────────────────
 
 def test_compute_limit_first_request_allowed() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     allowed, state = _compute_limit(None, now, limit=5, window_seconds=3600)
     assert allowed is True
     assert state["count"] == 1
@@ -26,7 +26,7 @@ def test_compute_limit_first_request_allowed() -> None:
 
 
 def test_compute_limit_within_limit_allowed() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     existing = {"window_start": now, "count": 4}
     allowed, state = _compute_limit(existing, now + timedelta(seconds=10), 5, 3600)
     assert allowed is True
@@ -34,14 +34,14 @@ def test_compute_limit_within_limit_allowed() -> None:
 
 
 def test_compute_limit_at_limit_blocked() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     existing = {"window_start": now, "count": 5}
     allowed, _ = _compute_limit(existing, now + timedelta(seconds=10), 5, 3600)
     assert allowed is False
 
 
 def test_compute_limit_window_resets_after_expiry() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     existing = {"window_start": now, "count": 5}
     after_window = now + timedelta(seconds=3601)
     allowed, state = _compute_limit(existing, after_window, 5, 3600)
@@ -96,7 +96,7 @@ class _FakeDb:
 # ── _compute_lockout (pure sliding-window lockout logic) ─────────────────────
 
 def test_compute_lockout_first_failure() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     data, locked = _compute_lockout(None, now)
     assert locked is False
     assert data["fail_count"] == 1
@@ -104,7 +104,7 @@ def test_compute_lockout_first_failure() -> None:
 
 
 def test_compute_lockout_below_threshold() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     existing = {"fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 2, "window_start": now, "locked_until": None}
     data, locked = _compute_lockout(existing, now + timedelta(seconds=5))
     assert locked is False
@@ -112,7 +112,7 @@ def test_compute_lockout_below_threshold() -> None:
 
 
 def test_compute_lockout_at_threshold_locks() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     existing = {
         "fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 1,
         "window_start": now,
@@ -124,7 +124,7 @@ def test_compute_lockout_at_threshold_locks() -> None:
 
 
 def test_compute_lockout_window_resets_old_failures() -> None:
-    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2024, 1, 1, tzinfo=UTC)
     past = now - timedelta(seconds=service.OTP_LOCKOUT_WINDOW_SECONDS + 1)
     existing = {
         "fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 1,
@@ -145,7 +145,7 @@ async def test_not_locked_initially() -> None:
 
 async def test_clear_otp_lockout_unlocks() -> None:
     db: Any = _FakeDb()
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     key = hashlib.sha256(b"user@example.com").hexdigest()
     # Pre-populate a locked state directly (record_otp_failure uses transactions
     # which require a real Firestore client; DB reads/deletes work with the fake)

@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from shared.config import Settings, get_settings
 from shared.firestore import get_firestore_client
-from shared.models import TodoItem
+from shared.todo_models import TodoItem
 
 from todo.dependencies import get_current_user_id
 from todo.schemas import (

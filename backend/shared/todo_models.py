@@ -5,15 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
-class User(BaseModel):
-    id: str
-    email: str
-    name: str
-    picture: str | None = None
-    created_at: datetime
-
-
 TodoStatus = Literal[
     "inbox",
     "today",

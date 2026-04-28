@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, Request
@@ -37,7 +37,7 @@ def _compute_limit(
     if existing:
         window_start: datetime = existing["window_start"]
         if window_start.tzinfo is None:
-            window_start = window_start.replace(tzinfo=timezone.utc)
+            window_start = window_start.replace(tzinfo=UTC)
         if (now - window_start).total_seconds() > window_seconds:
             return True, {"window_start": now, "count": 1}
         if existing["count"] >= limit:
@@ -54,7 +54,7 @@ async def _txn_check(
     window_seconds: int,
 ) -> bool:
     doc = await doc_ref.get(transaction=transaction)
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     allowed, new_state = _compute_limit(
         doc.to_dict() if doc.exists else None, now, limit, window_seconds
     )

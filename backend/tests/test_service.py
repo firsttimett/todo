@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from todo.schemas import CreateTodoRequest, UpdateTodoRequest
@@ -87,7 +87,7 @@ def build_todo_record(
     title: str = "Shared title",
     completed: bool = False,
 ) -> dict[str, Any]:
-    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc)
+    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=UTC)
     completed_at = created_at if completed else None
     status = "completed" if completed else "inbox"
     return {
@@ -113,8 +113,8 @@ def build_todo_record(
 
 async def test_read_normalizes_completed_state() -> None:
     db: Any = FakeDb()
-    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc)
-    updated_at = datetime(2026, 4, 1, 9, 30, tzinfo=timezone.utc)
+    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 1, 9, 30, tzinfo=UTC)
     db.get_collection("user-1", "todos").storage["todo-current"] = {
         "id": "todo-current",
         "user_id": "user-1",
@@ -122,7 +122,7 @@ async def test_read_normalizes_completed_state() -> None:
         "description": "Stored with the expanded schema",
         "priority": "high",
         "start_date": None,
-        "deadline": datetime(2026, 4, 3, 0, 0, tzinfo=timezone.utc),
+        "deadline": datetime(2026, 4, 3, 0, 0, tzinfo=UTC),
         "labels": ["Work"],
         "status": "today",
         "sort_order": 0,
@@ -145,10 +145,10 @@ async def test_read_normalizes_completed_state() -> None:
 
 async def test_create_todo_accepts_new_fields() -> None:
     db: Any = FakeDb()
-    start_date = datetime(2026, 4, 10, 0, 0, tzinfo=timezone.utc)
-    deadline = datetime(2026, 4, 12, 0, 0, tzinfo=timezone.utc)
-    completed_at = datetime(2026, 4, 11, 15, 45, tzinfo=timezone.utc)
-    reminder_at = datetime(2026, 4, 9, 9, 0, tzinfo=timezone.utc)
+    start_date = datetime(2026, 4, 10, 0, 0, tzinfo=UTC)
+    deadline = datetime(2026, 4, 12, 0, 0, tzinfo=UTC)
+    completed_at = datetime(2026, 4, 11, 15, 45, tzinfo=UTC)
+    reminder_at = datetime(2026, 4, 9, 9, 0, tzinfo=UTC)
 
     todo = await create_todo(
         db,
@@ -208,8 +208,8 @@ async def test_create_todo_accepts_new_fields() -> None:
 async def test_update_todo_accepts_new_fields() -> None:
     db: Any = FakeDb()
     todo_id = "todo-1"
-    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc)
-    updated_at = datetime(2026, 4, 1, 9, 0, tzinfo=timezone.utc)
+    created_at = datetime(2026, 4, 1, 8, 0, tzinfo=UTC)
+    updated_at = datetime(2026, 4, 1, 9, 0, tzinfo=UTC)
     db.get_collection("user-1", "todos").storage[todo_id] = {
         "id": todo_id,
         "user_id": "user-1",
@@ -218,7 +218,7 @@ async def test_update_todo_accepts_new_fields() -> None:
         "completed": False,
         "priority": "medium",
         "start_date": None,
-        "deadline": datetime(2026, 4, 2, 0, 0, tzinfo=timezone.utc),
+        "deadline": datetime(2026, 4, 2, 0, 0, tzinfo=UTC),
         "labels": ["Legacy"],
         "status": "inbox",
         "sort_order": 0,
@@ -230,15 +230,15 @@ async def test_update_todo_accepts_new_fields() -> None:
         "updated_at": updated_at,
     }
 
-    new_completed_at = datetime(2026, 4, 4, 17, 0, tzinfo=timezone.utc)
+    new_completed_at = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
     updated = await update_todo(
         db,
         "user-1",
         todo_id,
         UpdateTodoRequest(
             title="Updated task",
-            start_date=datetime(2026, 4, 5, 0, 0, tzinfo=timezone.utc),
-            deadline=datetime(2026, 4, 6, 0, 0, tzinfo=timezone.utc),
+            start_date=datetime(2026, 4, 5, 0, 0, tzinfo=UTC),
+            deadline=datetime(2026, 4, 6, 0, 0, tzinfo=UTC),
             labels=["Personal"],
             status="completed",
             sort_order=2,
@@ -254,7 +254,7 @@ async def test_update_todo_accepts_new_fields() -> None:
             reminders=[
                 {
                     "id": "reminder-1",
-                    "remind_at": datetime(2026, 4, 5, 9, 0, tzinfo=timezone.utc),
+                    "remind_at": datetime(2026, 4, 5, 9, 0, tzinfo=UTC),
                 },
             ],
             recurrence={
@@ -269,8 +269,8 @@ async def test_update_todo_accepts_new_fields() -> None:
 
     assert updated is not None
     assert updated.title == "Updated task"
-    assert updated.start_date == datetime(2026, 4, 5, 0, 0, tzinfo=timezone.utc)
-    assert updated.deadline == datetime(2026, 4, 6, 0, 0, tzinfo=timezone.utc)
+    assert updated.start_date == datetime(2026, 4, 5, 0, 0, tzinfo=UTC)
+    assert updated.deadline == datetime(2026, 4, 6, 0, 0, tzinfo=UTC)
     assert updated.labels == ["Personal"]
     assert updated.status == "completed"
     assert updated.completed is True

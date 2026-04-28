@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -9,9 +9,9 @@ if TYPE_CHECKING:
 
     from todo.schemas import CreateTodoRequest, UpdateTodoRequest
 
-from shared.models import TodoItem
+from shared.todo_models import TodoItem
 
-MAX_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+MAX_FAR_FUTURE = datetime.max.replace(tzinfo=UTC)
 
 
 def _todos_collection(
@@ -76,7 +76,7 @@ async def create_todo(
     user_id: str,
     data: CreateTodoRequest,
 ) -> TodoItem:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     todo_id = str(uuid.uuid4())
     payload = _todo_payload(data, for_create=True)
     payload["created_at"] = now
@@ -116,7 +116,7 @@ async def update_todo(
 
     current = _todo_from_doc(doc)
     payload = _todo_payload(data, for_create=False)
-    payload["updated_at"] = datetime.now(tz=timezone.utc)
+    payload["updated_at"] = datetime.now(tz=UTC)
     updated = _merge_todo_payload(
         current,
         payload,

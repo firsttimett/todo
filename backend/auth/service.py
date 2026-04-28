@@ -5,7 +5,7 @@ import hmac
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import jwt
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from google.cloud import firestore
     from shared.config import Settings
 
-from shared.models import User
+from shared.auth_models import OtpDocument, OtpLockoutDocument, RefreshTokenDocument, User
 from shared.ratelimit import hash_email
 
 
@@ -52,19 +52,18 @@ async def create_otp(db: firestore.AsyncClient, email: str) -> str:
     code = f"{secrets.randbelow(1_000_000):06d}"
     if not env_name.startswith("prod") and bypass_code:
         code = bypass_code
-    expires_at = datetime.now(tz=timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)
+    now = datetime.now(tz=UTC)
+    otp = OtpDocument(
+        code_hash=_hash_otp(code),
+        expires_at=now + timedelta(minutes=OTP_EXPIRE_MINUTES),
+        created_at=now,
+    )
 
     # Using email as doc ID ensures only one active OTP per email at a time
     await (
         db.collection("login_otps")
         .document(email.lower())
-        .set(
-            {
-                "code_hash": _hash_otp(code),
-                "expires_at": expires_at,
-                "created_at": datetime.now(tz=timezone.utc),
-            }
-        )
+        .set(otp.model_dump())
     )
 
     return code
@@ -81,20 +80,15 @@ async def verify_otp(db: firestore.AsyncClient, email: str, code: str) -> User |
     if not doc.exists:
         raise OtpNotFoundError()
 
-    data = doc.to_dict()
-    assert data is not None
+    otp = OtpDocument.model_validate(doc.to_dict() or {})
 
     # Always delete — OTPs are single-use
     await doc_ref.delete()
 
-    expires_at: datetime = data["expires_at"]
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    if datetime.now(tz=timezone.utc) > expires_at:
+    if datetime.now(tz=UTC) > otp.expires_at:
         return None
 
-    if not hmac.compare_digest(data["code_hash"].encode(), _hash_otp(code).encode()):
+    if not hmac.compare_digest(otp.code_hash.encode(), _hash_otp(code).encode()):
         return None
 
     return await _get_or_create_user(db, email.lower())
@@ -106,14 +100,15 @@ async def _get_or_create_user(db: firestore.AsyncClient, email: str) -> User:
     if docs:
         doc = docs[0]
         user_data = doc.to_dict()
-        assert user_data is not None
+        if user_data is None:
+            raise RuntimeError(f"User document {doc.id!r} exists but to_dict() returned None")
         profile = _user_profile(user_data)
         return _build_user(
-            doc.id, profile, user_data.get("created_at", datetime.now(tz=timezone.utc))
+            doc.id, profile, user_data.get("created_at", datetime.now(tz=UTC))
         )
 
     user_id = str(uuid.uuid4())
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     # Derive a display name from the email prefix
     name = email.split("@")[0]
     user = User(id=user_id, email=email, name=name, picture=None, created_at=now)
@@ -122,7 +117,7 @@ async def _get_or_create_user(db: firestore.AsyncClient, email: str) -> User:
 
 
 def create_access_token(user: User, settings: Settings) -> str:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": user.id,
@@ -149,17 +144,16 @@ async def create_refresh_token(
     settings: Settings,
 ) -> str:
     token_id = str(uuid.uuid4())
-    expire = datetime.now(tz=timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    now = datetime.now(tz=UTC)
+    token = RefreshTokenDocument(
+        user_id=user_id,
+        expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+        created_at=now,
+    )
     await (
         db.collection("refresh_tokens")
         .document(token_id)
-        .set(
-            {
-                "user_id": user_id,
-                "expires_at": expire,
-                "created_at": datetime.now(tz=timezone.utc),
-            }
-        )
+        .set(token.model_dump())
     )
     return token_id
 
@@ -168,14 +162,10 @@ async def is_otp_locked(db: firestore.AsyncClient, email: str) -> bool:
     doc = await db.collection("otp_lockouts").document(hash_email(email)).get()
     if not doc.exists:
         return False
-    data = doc.to_dict()
-    assert data is not None
-    locked_until = data.get("locked_until")
-    if not locked_until:
+    lockout = OtpLockoutDocument.model_validate(doc.to_dict() or {})
+    if lockout.locked_until is None:
         return False
-    if locked_until.tzinfo is None:
-        locked_until = locked_until.replace(tzinfo=timezone.utc)
-    return bool(datetime.now(tz=timezone.utc) < locked_until)
+    return datetime.now(tz=UTC) < lockout.locked_until
 
 
 def _compute_lockout(
@@ -186,7 +176,7 @@ def _compute_lockout(
     if existing:
         window_start: datetime = existing["window_start"]
         if window_start.tzinfo is None:
-            window_start = window_start.replace(tzinfo=timezone.utc)
+            window_start = window_start.replace(tzinfo=UTC)
         if (now - window_start).total_seconds() > OTP_LOCKOUT_WINDOW_SECONDS:
             data: dict[str, Any] = {"fail_count": 1, "window_start": now, "locked_until": None}
         else:
@@ -202,7 +192,7 @@ def _compute_lockout(
 @async_transactional
 async def _txn_record_failure(transaction: Any, doc_ref: Any) -> bool:
     doc = await doc_ref.get(transaction=transaction)
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     data, locked = _compute_lockout(doc.to_dict() if doc.exists else None, now)
     transaction.set(doc_ref, data)
     return locked
@@ -221,7 +211,6 @@ async def clear_otp_lockout(db: firestore.AsyncClient, email: str) -> None:
 async def validate_refresh_token(
     db: firestore.AsyncClient,
     token: str,
-    settings: Settings,
 ) -> User | None:
     token_ref = db.collection("refresh_tokens").document(token)
     token_doc = await token_ref.get()
@@ -229,29 +218,24 @@ async def validate_refresh_token(
     if not token_doc.exists:
         return None
 
-    data = token_doc.to_dict()
-    assert data is not None
-    expires_at: datetime = data["expires_at"]
+    refresh = RefreshTokenDocument.model_validate(token_doc.to_dict() or {})
 
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    if datetime.now(tz=timezone.utc) > expires_at:
+    if datetime.now(tz=UTC) > refresh.expires_at:
         await token_ref.delete()
         return None
 
-    user_id: str = data["user_id"]
-    user_ref = db.collection("users").document(user_id)
+    user_ref = db.collection("users").document(refresh.user_id)
     user_doc = await user_ref.get()
 
     if not user_doc.exists:
         return None
 
     user_data = user_doc.to_dict()
-    assert user_data is not None
+    if user_data is None:
+        raise RuntimeError(f"User document {refresh.user_id!r} exists but to_dict() returned None")
     profile = _user_profile(user_data)
     return _build_user(
-        user_id,
+        refresh.user_id,
         profile,
-        user_data.get("created_at", datetime.now(tz=timezone.utc)),
+        user_data.get("created_at", datetime.now(tz=UTC)),
     )
