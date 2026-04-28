@@ -160,9 +160,12 @@ resource "google_cloud_run_v2_service" "app" {
         }
       }
 
-      env {
-        name  = "OTP_BYPASS_CODE"
-        value = var.otp_bypass_code
+      dynamic "env" {
+        for_each = var.otp_bypass_code != "" ? [var.otp_bypass_code] : []
+        content {
+          name  = "OTP_BYPASS_CODE"
+          value = env.value
+        }
       }
 
       ports {
@@ -192,6 +195,7 @@ resource "google_cloud_run_v2_service" "app" {
     ignore_changes = [
       client,
       client_version,
+      template[0].revision,
       template[0].containers[0].image,
     ]
   }
