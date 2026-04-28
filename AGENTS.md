@@ -11,6 +11,19 @@ This repository is a monorepo. Application code lives under `services/`: `auth` 
 ## Coding Style & Naming Conventions
 Linting is enforced with Ruff for Python and ESLint for frontend code.
 
+After any change to a `.py` file under `backend/`, run both of these from the `backend/` directory before committing:
+```
+uv run ruff check --fix
+uv run mypy
+```
+
+### Python imports
+Place all imports at the top of the module. Do **not** put `import` or `from … import` statements inside functions or methods unless one of these conditions is explicitly true:
+- The import would create a **circular dependency** that cannot be resolved by restructuring.
+- The import has a **significant runtime cost** (e.g. a heavy C extension) and the function is called rarely enough that deferring it is a meaningful optimisation.
+
+In all other cases a deferred import is a code smell: it hides the module's real dependencies, breaks static analysis and linters, and adds a `sys.modules` dict lookup on every call for no benefit.
+
 ## Commit Guidelines
 Follows Conventional Commits 1.0.0.
 

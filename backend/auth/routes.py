@@ -10,9 +10,11 @@ from pydantic import BaseModel
 from shared.auth import get_current_user
 from shared.config import Settings, get_settings
 from shared.firestore import get_firestore_client
+from shared.ratelimit import FirestoreRateLimiter, client_ip, get_limiter, hash_email
 
 from auth.email import send_otp_email
 from auth.service import (
+    OtpNotFoundError,
     clear_otp_lockout,
     create_access_token,
     create_otp,
@@ -22,7 +24,6 @@ from auth.service import (
     validate_refresh_token,
     verify_otp,
 )
-from shared.ratelimit import FirestoreRateLimiter, client_ip, get_limiter, hash_email
 
 COOKIE_SECURE = os.environ.get("ENV_NAME", "local") != "local"
 
@@ -73,7 +74,15 @@ async def otp_verify(
     if await is_otp_locked(db, body.email):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Account temporarily locked")
 
-    user = await verify_otp(db, body.email, body.code)
+    try:
+        user = await verify_otp(db, body.email, body.code)
+    except OtpNotFoundError:
+        # No OTP was ever requested — don't count toward lockout (prevents
+        # targeted DoS: 5 bogus verifies would otherwise lock out the account).
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired code",
+        ) from None
 
     if not user:
         await record_otp_failure(db, body.email)

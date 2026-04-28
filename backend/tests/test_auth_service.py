@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+import secrets
+from typing import TYPE_CHECKING, Any, cast
 
 from auth import service
+
+if TYPE_CHECKING:
+    from google.cloud import firestore
 
 
 class FakeDocumentRef:
@@ -29,13 +33,20 @@ class FakeDb:
     def collection(self, name: str) -> FakeCollection:
         return self._collections.setdefault(name, FakeCollection())
 
+    def transaction(self) -> None:
+        return None
+
+
+def _as_client(db: FakeDb) -> firestore.AsyncClient:
+    return cast("firestore.AsyncClient", db)
+
 
 async def test_create_otp_uses_bypass_for_local(monkeypatch: Any) -> None:
     monkeypatch.setenv("ENV_NAME", "local")
     monkeypatch.setenv("OTP_BYPASS_CODE", "652093")
     db = FakeDb()
 
-    code = await service.create_otp(db, "User@Example.com")
+    code = await service.create_otp(_as_client(db), "User@Example.com")
 
     assert code == "652093"
     otp_doc = db.collection("login_otps").storage["user@example.com"]
@@ -47,7 +58,7 @@ async def test_create_otp_uses_bypass_for_nonprod(monkeypatch: Any) -> None:
     monkeypatch.setenv("OTP_BYPASS_CODE", "123456")
     db = FakeDb()
 
-    code = await service.create_otp(db, "user@example.com")
+    code = await service.create_otp(_as_client(db), "user@example.com")
 
     assert code == "123456"
 
@@ -55,10 +66,10 @@ async def test_create_otp_uses_bypass_for_nonprod(monkeypatch: Any) -> None:
 async def test_create_otp_ignores_bypass_for_prod(monkeypatch: Any) -> None:
     monkeypatch.setenv("ENV_NAME", "prod")
     monkeypatch.setenv("OTP_BYPASS_CODE", "652093")
-    monkeypatch.setattr(service.secrets, "randbelow", lambda _: 7)
+    monkeypatch.setattr(secrets, "randbelow", lambda _: 7)
     db = FakeDb()
 
-    code = await service.create_otp(db, "user@example.com")
+    code = await service.create_otp(_as_client(db), "user@example.com")
 
     assert code == "000007"
 
@@ -66,10 +77,10 @@ async def test_create_otp_ignores_bypass_for_prod(monkeypatch: Any) -> None:
 async def test_create_otp_uses_random_when_bypass_unset(monkeypatch: Any) -> None:
     monkeypatch.setenv("ENV_NAME", "local")
     monkeypatch.delenv("OTP_BYPASS_CODE", raising=False)
-    monkeypatch.setattr(service.secrets, "randbelow", lambda _: 42)
+    monkeypatch.setattr(secrets, "randbelow", lambda _: 42)
     db = FakeDb()
 
-    code = await service.create_otp(db, "user@example.com")
+    code = await service.create_otp(_as_client(db), "user@example.com")
 
     assert code == "000042"
 
@@ -79,7 +90,7 @@ async def test_create_otp_normalizes_env_name(monkeypatch: Any) -> None:
     monkeypatch.setenv("OTP_BYPASS_CODE", "234567")
     db = FakeDb()
 
-    code = await service.create_otp(db, "user@example.com")
+    code = await service.create_otp(_as_client(db), "user@example.com")
 
     assert code == "234567"
 
@@ -89,6 +100,6 @@ async def test_create_otp_uses_bypass_for_non_blocked_env(monkeypatch: Any) -> N
     monkeypatch.setenv("OTP_BYPASS_CODE", "777777")
     db = FakeDb()
 
-    code = await service.create_otp(db, "user@example.com")
+    code = await service.create_otp(_as_client(db), "user@example.com")
 
     assert code == "777777"

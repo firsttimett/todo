@@ -9,12 +9,19 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import jwt
+from google.cloud.firestore import async_transactional
 
 if TYPE_CHECKING:
     from google.cloud import firestore
     from shared.config import Settings
 
 from shared.models import User
+from shared.ratelimit import hash_email
+
+
+class OtpNotFoundError(Exception):
+    """Raised by verify_otp when no OTP document exists for the email."""
+
 
 USER_PROFILE_FIELDS = ("email", "name", "picture")
 
@@ -65,12 +72,14 @@ async def create_otp(db: firestore.AsyncClient, email: str) -> str:
 
 async def verify_otp(db: firestore.AsyncClient, email: str, code: str) -> User | None:
     """Verify OTP. Deletes the OTP record regardless of outcome (single-use).
-    Returns the User on success, None on invalid/expired code."""
+    Returns the User on success, None on invalid/expired code.
+    Raises OtpNotFoundError when no OTP was ever requested for this email —
+    callers must not record a failure in that case (prevents DoS lockout)."""
     doc_ref = db.collection("login_otps").document(email.lower())
     doc = await doc_ref.get()
 
     if not doc.exists:
-        return None
+        raise OtpNotFoundError()
 
     data = doc.to_dict()
     assert data is not None
@@ -156,8 +165,6 @@ async def create_refresh_token(
 
 
 async def is_otp_locked(db: firestore.AsyncClient, email: str) -> bool:
-    from shared.ratelimit import hash_email
-
     doc = await db.collection("otp_lockouts").document(hash_email(email)).get()
     if not doc.exists:
         return False
@@ -168,38 +175,46 @@ async def is_otp_locked(db: firestore.AsyncClient, email: str) -> bool:
         return False
     if locked_until.tzinfo is None:
         locked_until = locked_until.replace(tzinfo=timezone.utc)
-    return datetime.now(tz=timezone.utc) < locked_until
+    return bool(datetime.now(tz=timezone.utc) < locked_until)
 
 
-async def record_otp_failure(db: firestore.AsyncClient, email: str) -> bool:
-    """Increment the verify-failure counter. Returns True if the account is now locked."""
-    from shared.ratelimit import hash_email
-
-    doc_ref = db.collection("otp_lockouts").document(hash_email(email))
-    doc = await doc_ref.get()
-    now = datetime.now(tz=timezone.utc)
-
-    if doc.exists:
-        data = dict(doc.to_dict())  # type: ignore[arg-type]
-        window_start: datetime = data["window_start"]
+def _compute_lockout(
+    existing: dict[str, Any] | None,
+    now: datetime,
+) -> tuple[dict[str, Any], bool]:
+    """Pure function: returns (new_doc_state, is_now_locked) for the lockout counter."""
+    if existing:
+        window_start: datetime = existing["window_start"]
         if window_start.tzinfo is None:
             window_start = window_start.replace(tzinfo=timezone.utc)
         if (now - window_start).total_seconds() > OTP_LOCKOUT_WINDOW_SECONDS:
-            data = {"fail_count": 1, "window_start": now, "locked_until": None}
+            data: dict[str, Any] = {"fail_count": 1, "window_start": now, "locked_until": None}
         else:
+            data = dict(existing)
             data["fail_count"] = data.get("fail_count", 0) + 1
             if data["fail_count"] >= OTP_LOCKOUT_MAX_FAILURES:
                 data["locked_until"] = now + timedelta(seconds=OTP_LOCKOUT_DURATION_SECONDS)
     else:
         data = {"fail_count": 1, "window_start": now, "locked_until": None}
+    return data, data.get("locked_until") is not None
 
-    await doc_ref.set(data)
-    return data.get("locked_until") is not None
+
+@async_transactional
+async def _txn_record_failure(transaction: Any, doc_ref: Any) -> bool:
+    doc = await doc_ref.get(transaction=transaction)
+    now = datetime.now(tz=timezone.utc)
+    data, locked = _compute_lockout(doc.to_dict() if doc.exists else None, now)
+    transaction.set(doc_ref, data)
+    return locked
+
+
+async def record_otp_failure(db: firestore.AsyncClient, email: str) -> bool:
+    """Atomically increment the verify-failure counter. Returns True if the account is now locked."""
+    doc_ref = db.collection("otp_lockouts").document(hash_email(email))
+    return await _txn_record_failure(db.transaction(), doc_ref)
 
 
 async def clear_otp_lockout(db: firestore.AsyncClient, email: str) -> None:
-    from shared.ratelimit import hash_email
-
     await db.collection("otp_lockouts").document(hash_email(email)).delete()
 
 

@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from auth import service
+from auth.service import _compute_lockout
 from shared.ratelimit import _compute_limit
-
 
 # ── P0.2 — timing-safe comparison ────────────────────────────────────────────
 
@@ -93,49 +93,66 @@ class _FakeDb:
         return self._cols.setdefault(name, _FakeCol())
 
 
-# ── Lockout service tests ─────────────────────────────────────────────────────
+# ── _compute_lockout (pure sliding-window lockout logic) ─────────────────────
+
+def test_compute_lockout_first_failure() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    data, locked = _compute_lockout(None, now)
+    assert locked is False
+    assert data["fail_count"] == 1
+    assert data["locked_until"] is None
+
+
+def test_compute_lockout_below_threshold() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    existing = {"fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 2, "window_start": now, "locked_until": None}
+    data, locked = _compute_lockout(existing, now + timedelta(seconds=5))
+    assert locked is False
+    assert data["fail_count"] == service.OTP_LOCKOUT_MAX_FAILURES - 1
+
+
+def test_compute_lockout_at_threshold_locks() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    existing = {
+        "fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 1,
+        "window_start": now,
+        "locked_until": None,
+    }
+    data, locked = _compute_lockout(existing, now + timedelta(seconds=5))
+    assert locked is True
+    assert data["locked_until"] is not None
+
+
+def test_compute_lockout_window_resets_old_failures() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    past = now - timedelta(seconds=service.OTP_LOCKOUT_WINDOW_SECONDS + 1)
+    existing = {
+        "fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 1,
+        "window_start": past,
+        "locked_until": None,
+    }
+    data, locked = _compute_lockout(existing, now)
+    assert locked is False
+    assert data["fail_count"] == 1
+
+
+# ── Lockout service tests (DB read/delete paths) ──────────────────────────────
 
 async def test_not_locked_initially() -> None:
     db: Any = _FakeDb()
     assert not await service.is_otp_locked(db, "user@example.com")
 
 
-async def test_record_failure_does_not_lock_before_threshold() -> None:
-    db: Any = _FakeDb()
-    for _ in range(service.OTP_LOCKOUT_MAX_FAILURES - 1):
-        locked = await service.record_otp_failure(db, "user@example.com")
-        assert locked is False
-    assert not await service.is_otp_locked(db, "user@example.com")
-
-
-async def test_locks_after_max_failures() -> None:
-    db: Any = _FakeDb()
-    for _ in range(service.OTP_LOCKOUT_MAX_FAILURES - 1):
-        await service.record_otp_failure(db, "user@example.com")
-    locked = await service.record_otp_failure(db, "user@example.com")
-    assert locked is True
-    assert await service.is_otp_locked(db, "user@example.com")
-
-
 async def test_clear_otp_lockout_unlocks() -> None:
     db: Any = _FakeDb()
-    for _ in range(service.OTP_LOCKOUT_MAX_FAILURES):
-        await service.record_otp_failure(db, "user@example.com")
-    await service.clear_otp_lockout(db, "user@example.com")
-    assert not await service.is_otp_locked(db, "user@example.com")
-
-
-async def test_lockout_window_resets_old_failures() -> None:
-    db: Any = _FakeDb()
-    past = datetime.now(tz=timezone.utc) - timedelta(seconds=601)
+    now = datetime.now(tz=timezone.utc)
     key = hashlib.sha256(b"user@example.com").hexdigest()
-    # Pre-populate with near-threshold failures from outside the current window
+    # Pre-populate a locked state directly (record_otp_failure uses transactions
+    # which require a real Firestore client; DB reads/deletes work with the fake)
     db.collection("otp_lockouts").storage[key] = {
-        "fail_count": service.OTP_LOCKOUT_MAX_FAILURES - 1,
-        "window_start": past,
-        "locked_until": None,
+        "fail_count": service.OTP_LOCKOUT_MAX_FAILURES,
+        "window_start": now,
+        "locked_until": now + timedelta(seconds=service.OTP_LOCKOUT_DURATION_SECONDS),
     }
-    # One more failure starts a fresh window — should not trigger lockout
-    locked = await service.record_otp_failure(db, "user@example.com")
-    assert locked is False
+    await service.clear_otp_lockout(db, "user@example.com")
     assert not await service.is_otp_locked(db, "user@example.com")

@@ -23,7 +23,7 @@ def client_ip(request: Request) -> str:
     if os.environ.get("ENV_NAME", "local") != "local":
         xff = request.headers.get("X-Forwarded-For", "")
         if xff:
-            return xff.split(",")[-1].strip()
+            return xff.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
 
