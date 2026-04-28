@@ -10,12 +10,17 @@ from pydantic import BaseModel
 from shared.auth import get_current_user
 from shared.config import Settings, get_settings
 from shared.firestore import get_firestore_client
+from shared.ratelimit import FirestoreRateLimiter, client_ip, get_limiter, hash_email
 
 from auth.email import send_otp_email
 from auth.service import (
+    OtpNotFoundError,
+    clear_otp_lockout,
     create_access_token,
     create_otp,
     create_refresh_token,
+    is_otp_locked,
+    record_otp_failure,
     validate_refresh_token,
     verify_otp,
 )
@@ -37,8 +42,15 @@ class OtpVerifyBody(BaseModel):
 @router.post("/auth/otp/request", status_code=status.HTTP_202_ACCEPTED)
 async def otp_request(
     body: OtpRequestBody,
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    limiter: Annotated[FirestoreRateLimiter, Depends(get_limiter)],
 ) -> JSONResponse:
+    if not await limiter.check(f"otp_req:email:{hash_email(body.email)}", 5, 3600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many OTP requests for this address")
+    if not await limiter.check(f"otp_req:ip:{client_ip(request)}", 20, 3600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many OTP requests from this IP")
+
     db = get_firestore_client(settings)
     code = await create_otp(db, body.email)
     with suppress(Exception):
@@ -50,16 +62,36 @@ async def otp_request(
 @router.post("/auth/otp/verify")
 async def otp_verify(
     body: OtpVerifyBody,
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    limiter: Annotated[FirestoreRateLimiter, Depends(get_limiter)],
 ) -> JSONResponse:
+    if not await limiter.check(f"otp_verify:email:{hash_email(body.email)}", 10, 600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many verification attempts")
+
     db = get_firestore_client(settings)
-    user = await verify_otp(db, body.email, body.code)
+
+    if await is_otp_locked(db, body.email):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Account temporarily locked")
+
+    try:
+        user = await verify_otp(db, body.email, body.code)
+    except OtpNotFoundError:
+        # No OTP was ever requested — don't count toward lockout (prevents
+        # targeted DoS: 5 bogus verifies would otherwise lock out the account).
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired code",
+        ) from None
 
     if not user:
+        await record_otp_failure(db, body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired code",
         )
+
+    await clear_otp_lockout(db, body.email)
 
     refresh_token = await create_refresh_token(db, user.id, settings)
     access_token = create_access_token(user, settings)

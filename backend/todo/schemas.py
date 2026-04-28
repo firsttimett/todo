@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from shared.models import RecurrenceFrequency, TodoStatus
+from shared.todo_models import RecurrenceFrequency, TodoStatus
 
 
 class TodoSubtaskPayload(BaseModel):
