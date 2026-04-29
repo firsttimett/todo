@@ -164,7 +164,7 @@ jobs:
       - name: Authenticate to GCP via Workload Identity Federation
         uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ secrets.WIF_PLAN_STAGING_RESOURCE_NAME }}
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: tfcd-nonprod
 
       - uses: hashicorp/setup-terraform@v4
