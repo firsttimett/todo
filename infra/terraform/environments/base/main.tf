@@ -340,10 +340,17 @@ resource "google_project_iam_member" "tf_plan_pr_nonprod" {
 }
 
 # tfstate read for PR plan. -lock=false in the workflow avoids needing write.
+# Conditioned to the staging prefix so PR runs cannot read base or production
+# state (which contain sensitive resource attributes).
 resource "google_storage_bucket_iam_member" "tf_plan_pr_tfstate" {
   bucket = google_storage_bucket.tfstate.name
   role   = "roles/storage.objectViewer"
   member = local.wif_pr
+  condition {
+    title       = "Staging tfstate only"
+    description = "Limit PR plan to objects under tfstate/staging/."
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.tfstate.name}/objects/tfstate/staging/\")"
+  }
 }
 
 # ---------------------------------------------------------------------------
