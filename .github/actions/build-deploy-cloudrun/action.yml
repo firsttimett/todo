@@ -55,6 +55,7 @@ runs:
 
     - name: Build and push image
       if: ${{ inputs.skip_build != 'true' }}
+      id: push
       uses: docker/build-push-action@v7
       with:
         context: .
@@ -66,6 +67,8 @@ runs:
 
     - name: Deploy Cloud Run revision
       shell: bash
+      env:
+        PUSH_DIGEST: ${{ steps.push.outputs.digest }}
       run: |
         # --no-traffic is only valid on an existing service; omit it on first deploy
         if gcloud run services describe ${{ inputs.service }} \
@@ -82,8 +85,16 @@ runs:
           UPDATE_ENV_VARS="--update-env-vars ${{ inputs.update_env_vars }}"
         fi
 
+        # Use the immutable digest when the build ran; fall back to the tag for
+        # skip_build=true (production promotion) where no new push occurred.
+        if [ -n "$PUSH_DIGEST" ]; then
+          IMAGE_REF="${{ inputs.image }}@${PUSH_DIGEST}"
+        else
+          IMAGE_REF="${{ inputs.image }}"
+        fi
+
         gcloud run deploy ${{ inputs.service }} \
-          --image ${{ inputs.image }} \
+          --image "$IMAGE_REF" \
           --region ${{ inputs.region }} \
           --project ${{ inputs.project }} \
           --tag ${{ inputs.revision_tag }} \
