@@ -240,13 +240,15 @@ jobs:
           SHA="${{ inputs.git_sha || github.sha }}"
           echo "short=${SHA:0:8}" >> $GITHUB_OUTPUT
 
-      - name: Generate firebase.json (rewrite to new-tagged revision)
+      - name: Generate firebase.json (rewrite pinned to new revision)
         working-directory: frontend
-        run: ENV=${{ inputs.suffix }} TAG=new envsubst < firebase.json.tpl > firebase.json
+        run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
 
       - name: Deploy pre-flip preview channel
         uses: FirebaseExtended/action-hosting-deploy@v0
         id: firebase-preview
+        env:
+          FIREBASE_CLI_EXPERIMENTS: pintags
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -387,7 +389,7 @@ jobs:
 
       - name: Generate firebase.json for env
         working-directory: frontend
-        run: ENV=${{ inputs.suffix }} TAG="" envsubst < firebase.json.tpl | jq 'del(.hosting.rewrites[].run.tag)' > firebase.json
+        run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl | jq 'del(.hosting.rewrites[].run.pinTag)' > firebase.json
 
       - name: Deploy frontend to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0

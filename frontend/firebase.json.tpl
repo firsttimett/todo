@@ -8,7 +8,7 @@
         "run": {
           "serviceId": "nnow-${ENV}",
           "region": "asia-southeast1",
-          "tag": "${TAG}"
+          "pinTag": true
         }
       },
       {
