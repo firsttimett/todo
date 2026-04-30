@@ -50,7 +50,7 @@ test-frontend:
 
 lint:
 	uvx ruff check .
-	cd backend && uv run mypy auth/ shared/ todo/
+	cd backend && uv run mypy .
 	cd frontend && npm run lint
 
 format:

@@ -31,6 +31,7 @@ jobs:
           filters: |
             backend:
               - ".github/workflows/ci.yml"
+              - "pyproject.toml"
               - "backend/**"
             frontend:
               - ".github/workflows/ci.yml"
@@ -43,11 +44,14 @@ jobs:
               - "infra/terraform/environments/staging/**"
               - "infra/terraform/modules/**"
 
-  test-backend:
-    name: Test backend
+  backend:
+    name: Backend checks
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v6
 
@@ -58,11 +62,17 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Run backend tests
-        run: cd backend && uv run pytest
+      - name: Ruff check
+        run: uv run ruff check .
 
-  test-frontend:
-    name: Test frontend
+      - name: Mypy
+        run: uv run mypy .
+
+      - name: Run backend tests
+        run: uv run pytest
+
+  frontend:
+    name: Frontend checks
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
@@ -80,6 +90,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Run frontend tests
         run: npm test
@@ -141,7 +154,7 @@ jobs:
   terraform-plan-staging:
     name: Terraform plan (staging)
     runs-on: ubuntu-latest
-    needs: changes
+    needs: [changes, terraform-validate]
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       needs.changes.outputs.terraform_staging == 'true'
