@@ -126,7 +126,7 @@ async def refresh(
         )
 
     db = get_firestore_client(settings)
-    user = await validate_refresh_token(db, token, settings)
+    user = await validate_refresh_token(db, token)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
