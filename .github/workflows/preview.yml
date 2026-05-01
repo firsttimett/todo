@@ -72,13 +72,15 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Generate firebase.json (rewrite points to tagged revision)
+      - name: Generate firebase.json (rewrite pinned to PR revision)
         working-directory: frontend
-        run: ENV=nonprod TAG=${{ env.TAG }} envsubst < firebase.json.tpl > firebase.json
+        run: ENV=nonprod envsubst < firebase.json.tpl > firebase.json
 
       - name: Deploy preview channel to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         id: firebase-deploy
+        env:
+          FIREBASE_CLI_EXPERIMENTS: pintags
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
