@@ -170,6 +170,37 @@ jobs:
         working-directory: ${{ inputs.terraform_dir }}
         run: terraform apply tfplan
 
+  check_live_pin:
+    name: Check if live channel is pinned
+    # firebase-tools refuses to deploy a pinned preview against an unpinned live
+    # channel. We gate the e2e job on this so first-time pinTag rollout on a
+    # Hosting site (or recovery from drift) skips e2e once and lets the release
+    # job pin live as a side effect of its normal hosting deploy.
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    outputs:
+      pinned: ${{ steps.check.outputs.pinned }}
+
+    steps:
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Check live channel rewrite pin status
+        id: check
+        run: |
+          TOKEN=$(gcloud auth print-access-token)
+          PINNED=$(curl -fsS \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "x-goog-user-project: ${{ inputs.firebase_project_id }}" \
+            "https://firebasehosting.googleapis.com/v1beta1/sites/${{ inputs.firebase_project_id }}/channels/live/releases?pageSize=1" \
+            | jq -r '[.releases[]?.version.config.rewrites[]? | select(.run.tag)] | if length > 0 then "yes" else "no" end')
+          echo "Live channel pin status: $PINNED"
+          echo "pinned=$PINNED" >> $GITHUB_OUTPUT
+
   deploy:
     name: Deploy to ${{ inputs.environment }}
     runs-on: ubuntu-latest
@@ -202,9 +233,11 @@ jobs:
 
   e2e:
     name: E2E tests (pre-flip)
-    if: inputs.run_e2e && inputs.environment == 'staging'
+    # Skipped on bootstrap (live unpinned), refers to check_live_pin job for more details
+    # release will pin live as a side effect, and e2e runs normally on subsequent deploys.
+    if: inputs.run_e2e && inputs.environment == 'staging' && needs.check_live_pin.outputs.pinned == 'yes'
     runs-on: ubuntu-latest
-    needs: [deploy]
+    needs: [deploy, check_live_pin]
     environment:
       name: ${{ inputs.environment }}
 
