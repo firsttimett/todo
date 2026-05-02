@@ -380,6 +380,12 @@ resource "google_service_account_iam_member" "firebase_cicd_nonprod_wif_imperson
   member             = local.wif_repo
 }
 
+resource "google_service_account_iam_member" "firebase_cicd_prod_wif_impersonation" {
+  service_account_id = google_service_account.firebase_cicd_prod.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.wif_repo
+}
+
 resource "google_service_account_key" "firebase_cicd_prod" {
   service_account_id = google_service_account.firebase_cicd_prod.name
 }
