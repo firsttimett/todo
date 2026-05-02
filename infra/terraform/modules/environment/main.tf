@@ -161,10 +161,10 @@ resource "google_cloud_run_v2_service" "app" {
       }
 
       dynamic "env" {
-        for_each = var.otp_bypass_code != "" ? { otp = var.otp_bypass_code } : {}
+        for_each = nonsensitive(var.otp_bypass_code) != "" ? toset(["otp"]) : toset([])
         content {
           name  = "OTP_BYPASS_CODE"
-          value = env.value
+          value = var.otp_bypass_code
         }
       }
 
