@@ -192,11 +192,11 @@ jobs:
       - name: Check live channel rewrite pin status
         id: check
         run: |
-          TOKEN=$(gcloud auth print-access-token)
+          FIREBASE_CICD_SA="firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com"
+          TOKEN=$(gcloud auth print-access-token --impersonate-service-account="$FIREBASE_CICD_SA")
           PINNED=$(curl -fsS \
             -H "Authorization: Bearer $TOKEN" \
-            -H "x-goog-user-project: ${{ inputs.firebase_project_id }}" \
-            "https://firebasehosting.googleapis.com/v1beta1/sites/${{ inputs.firebase_project_id }}/channels/live/releases?pageSize=1" \
+            "https://firebasehosting.googleapis.com/v1beta1/projects/${{ inputs.firebase_project_id }}/sites/${{ inputs.firebase_project_id }}/channels/live/releases?pageSize=1" \
             | jq -r '[.releases[]?.version.config.rewrites[]? | select(.run.tag)] | if length > 0 then "yes" else "no" end')
           echo "Live channel pin status: $PINNED"
           echo "pinned=$PINNED" >> $GITHUB_OUTPUT
