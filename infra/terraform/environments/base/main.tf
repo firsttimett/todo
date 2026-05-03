@@ -55,6 +55,9 @@ locals {
   # branch-scoped: staging + prod both deploy from main; environment-level GitHub
   # approval gates (production-gate) provide the staging↔prod separation.
   wif_main = "principalSet://iam.googleapis.com/${local.wif_pool}/attribute.ref/refs/heads/main"
+  # PR-event-scoped: read-only access for terraform plan in PR checks.
+  # Implicitly repo-scoped via the provider's attribute_condition.
+  wif_pr = "principalSet://iam.googleapis.com/${local.wif_pool}/attribute.event_name/pull_request"
 
   # tfcd-infra: AR push only — tfstate access is granted at bucket level below.
   cicd_infra_roles = toset(["roles/artifactregistry.writer"])
@@ -255,6 +258,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.repository"       = "assertion.repository"
     "attribute.repository_owner" = "assertion.repository_owner"
     "attribute.ref"              = "assertion.ref"
+    "attribute.event_name"       = "assertion.event_name"
   }
 
   attribute_condition = "assertion.repository == '${var.github_repo}'"
@@ -324,6 +328,29 @@ resource "google_storage_bucket_iam_member" "cicd_tfstate" {
   bucket = google_storage_bucket.tfstate.name
   role   = "roles/storage.admin"
   member = local.wif_repo
+}
+
+# PR plan: read-only on staging for terraform plan in PR checks.
+# The PR-time plan job in ci.yml uses this principal via WIF_RESOURCE_NAME;
+# tfstate access is granted at the bucket level below.
+resource "google_project_iam_member" "tf_plan_pr_nonprod" {
+  project = google_project.nonprod.project_id
+  role    = "roles/viewer"
+  member  = local.wif_pr
+}
+
+# tfstate read for PR plan. -lock=false in the workflow avoids needing write.
+# Conditioned to the staging prefix so PR runs cannot read base or production
+# state (which contain sensitive resource attributes).
+resource "google_storage_bucket_iam_member" "tf_plan_pr_tfstate" {
+  bucket = google_storage_bucket.tfstate.name
+  role   = "roles/storage.objectViewer"
+  member = local.wif_pr
+  condition {
+    title       = "Staging tfstate only"
+    description = "Limit PR plan to objects under tfstate/staging/."
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.tfstate.name}/objects/tfstate/staging/\")"
+  }
 }
 
 # ---------------------------------------------------------------------------
