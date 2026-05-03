@@ -1,6 +1,7 @@
 name: Cleanup preview environment
 
 on:
+  # SECURITY: Do not change this to pull_request_target. Fork PRs would inherit cloud credentials.
   pull_request:
     types: [closed]
     branches:
@@ -29,7 +30,7 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: tfcd-infra

@@ -68,16 +68,16 @@ jobs:
       TF_VAR_otp_bypass_code: ${{ inputs.use_otp_bypass && secrets.OTP_BYPASS_CODE || '' }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
         with:
           terraform_version: "~1.7"
           terraform_wrapper: false
@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload plan artifact
         if: inputs.environment == 'production'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tfplan-production-${{ github.run_id }}
           path: ${{ inputs.terraform_dir }}/tfplan
@@ -142,16 +142,16 @@ jobs:
       TF_VAR_resend_from_email: ${{ secrets.RESEND_FROM_EMAIL }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
         with:
           terraform_version: "~1.7"
           terraform_wrapper: false
@@ -161,7 +161,7 @@ jobs:
         run: terraform init
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: tfplan-production-${{ github.run_id }}
           path: ${{ inputs.terraform_dir }}
@@ -184,7 +184,7 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
@@ -214,10 +214,10 @@ jobs:
       name: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
@@ -242,16 +242,16 @@ jobs:
       name: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
           cache: npm
@@ -278,7 +278,7 @@ jobs:
         run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
 
       - name: Deploy pre-flip preview channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
+        uses: FirebaseExtended/action-hosting-deploy@092436dca3ec6dacb231d965ae56f7ff6c09f258 # v0
         id: firebase-preview
         env:
           FIREBASE_CLI_EXPERIMENTS: pintags
@@ -305,7 +305,7 @@ jobs:
         run: npx playwright test --project=chromium
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: playwright-report-${{ inputs.environment }}-pre-flip
@@ -322,7 +322,7 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
@@ -371,10 +371,10 @@ jobs:
       prev_revision: ${{ steps.prev.outputs.revision }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
@@ -407,7 +407,7 @@ jobs:
             --to-tags new=100
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
           cache: npm
@@ -425,7 +425,7 @@ jobs:
         run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
 
       - name: Deploy frontend to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+        uses: FirebaseExtended/action-hosting-deploy@092436dca3ec6dacb231d965ae56f7ff6c09f258 # v0
         id: firebase-deploy
         env:
           FIREBASE_CLI_EXPERIMENTS: pintags
@@ -454,7 +454,7 @@ jobs:
 
     steps:
       - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
