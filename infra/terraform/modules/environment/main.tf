@@ -195,8 +195,11 @@ resource "google_cloud_run_v2_service" "app" {
     ignore_changes = [
       client,
       client_version,
-      template[0].revision,
-      template[0].containers[0].image,
+      # Terraform bootstraps the service; gcloud run deploy owns all template
+      # changes. Ignoring the whole block prevents Terraform from resending the
+      # current revision name with a different config, which Cloud Run rejects
+      # with 409.
+      template,
     ]
   }
 }
