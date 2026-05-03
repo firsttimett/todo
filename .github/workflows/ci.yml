@@ -191,7 +191,11 @@ jobs:
 
       - name: Terraform plan
         working-directory: infra/terraform/environments/staging
-        run: terraform plan -lock=false -out=tfplan -no-color
+        # PR plans are advisory and run with dummy secret inputs. Do not refresh
+        # live resources here: the PR WIF principal is intentionally limited to
+        # staging tfstate read access and cannot read Secret Manager metadata or
+        # Firestore database metadata.
+        run: terraform plan -refresh=false -lock=false -out=tfplan -no-color
 
       - name: Post plan to job summary
         working-directory: infra/terraform/environments/staging
