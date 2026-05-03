@@ -81,7 +81,7 @@ jobs:
         run: ENV=nonprod envsubst < firebase.json.tpl > firebase.json
 
       - name: Deploy preview channel to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@092436dca3ec6dacb231d965ae56f7ff6c09f258 # v0
+        uses: FirebaseExtended/action-hosting-deploy@e2eda2e106cfa35cdbcf4ac9ddaf6c4756df2c8c # v0
         id: firebase-deploy
         env:
           FIREBASE_CLI_EXPERIMENTS: pintags
@@ -112,7 +112,7 @@ jobs:
         run: npx playwright test --project=chromium
 
       - name: Upload Playwright report if there's test failure
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-report-pr-${{ github.event.number }}
