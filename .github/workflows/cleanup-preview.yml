@@ -40,7 +40,7 @@ jobs:
           TAG_COUNT=$(gcloud run services describe nnow-nonprod \
             --region asia-southeast1 \
             --project tfcd-nonprod \
-            --format="value(status.traffic[].tag)" | grep -c "^${{ env.TAG }}$" || true)
+            --format="value(status.traffic[].tag)" | tr ';' '\n' | grep -c "^${{ env.TAG }}$" || true)
           echo "tag_exists=$([[ $TAG_COUNT -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
           DB_NAME=$(gcloud firestore databases describe \
