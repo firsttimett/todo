@@ -19,6 +19,10 @@ permissions:
   pull-requests: write
   checks: write
 
+concurrency:
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
 jobs:
   preview:
     name: Build · Deploy · Test

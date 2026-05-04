@@ -17,6 +17,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: true
+
 jobs:
   gate:
     name: Approve rollback

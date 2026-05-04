@@ -22,6 +22,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: preview-pr-${{ github.event.number || inputs.pr_number }}
+  cancel-in-progress: true
+
 jobs:
   cleanup:
     name: Remove PR preview resources
