@@ -67,5 +67,6 @@ jobs:
       gcp_project: tfcd-prod
       terraform_dir: infra/terraform/environments/production
       firebase_project_id: tfcd-prod
+      firestore_database: nnow-prod
       git_sha: ${{ needs.validate_sha.outputs.full_sha }}
       skip_build: true
