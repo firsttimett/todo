@@ -22,6 +22,10 @@ on:
       firebase_project_id:
         required: true
         type: string
+      firestore_database:
+        required: true
+        type: string
+        description: "Firestore database name (e.g. nnow-nonprod). Passed as FIRESTORE_DATABASE to Cloud Run to prevent inheritance from PR preview revisions."
 
       # ── Staging-only ──────────────────────────────────────────────────────────
       use_otp_bypass:
@@ -230,6 +234,7 @@ jobs:
           project: ${{ inputs.gcp_project }}
           revision_tag: new
           skip_build: ${{ inputs.skip_build }}
+          update_env_vars: FIRESTORE_DATABASE=${{ inputs.firestore_database }}
 
   e2e:
     name: E2E tests (pre-flip)

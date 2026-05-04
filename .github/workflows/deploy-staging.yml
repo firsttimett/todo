@@ -36,6 +36,7 @@ jobs:
       gcp_project: tfcd-nonprod
       terraform_dir: infra/terraform/environments/staging
       firebase_project_id: tfcd-nonprod
+      firestore_database: nnow-nonprod
       use_otp_bypass: true
       run_e2e: true
       git_sha: ${{ github.sha }}
