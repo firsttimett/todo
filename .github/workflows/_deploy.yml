@@ -235,7 +235,12 @@ jobs:
     name: E2E tests (pre-flip)
     # Skipped on bootstrap (live unpinned), refers to check_live_pin job for more details
     # release will pin live as a side effect, and e2e runs normally on subsequent deploys.
-    if: inputs.run_e2e && inputs.environment == 'staging' && needs.check_live_pin.outputs.pinned == 'yes'
+    if: |
+      always() &&
+      inputs.run_e2e &&
+      inputs.environment == 'staging' &&
+      needs.deploy.result == 'success' &&
+      needs.check_live_pin.outputs.pinned == 'yes'
     runs-on: ubuntu-latest
     needs: [deploy, check_live_pin]
     environment:
