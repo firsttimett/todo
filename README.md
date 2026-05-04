@@ -282,7 +282,7 @@ On PR close, `cleanup-preview.yml` removes the revision tag, the per-PR Firestor
 
 Deployments follow a blue-green pattern: new revisions are deployed with `--no-traffic`, then traffic is flipped in a separate step. This means if the new revision fails to start, zero users are affected; smoke/E2E tests run against it before any real traffic arrives; and rollback is a traffic update — Cloud Run retains old revisions until its GC policy removes them.
 
-The promotion model is trunk-based and same-artifact: every image is built from a main commit on the way to staging, and production is a redeploy of the exact :<git-sha> image that passed staging — never a rebuild.
+The promotion model is trunk-based and same-SHA: every image is built from a main commit on the way to staging, and production redeploys the exact `:<git-sha>` backend image that passed staging — never a rebuild. Terraform plan/apply and the frontend build also run from that same git SHA, so manual promotion of an older SHA does not mix an old backend with current frontend or infrastructure code.
 
 <details>
 <summary>Staging steps (auto, on every merge to `main`)</summary>
