@@ -99,9 +99,9 @@ Also experimenting with **Preact Signals** for state and the **Vite PWA plugin**
 .
 ├── .github/workflows/          # CI/CD pipelines
 │   ├── ci.yml                  # PR checks (test, lint, Docker build)
-│   ├── _deploy.yml             # Reusable deploy workflow (provision → build → E2E/smoke → flip)
-│   ├── deploy-staging.yml      # Push to main → auto-deploy staging (builds image, runs E2E pre-flip)
-│   ├── deploy-production.yml   # Manual workflow_dispatch → promote same SHA image to production
+│   ├── _deploy.yml             # Reusable deploy workflow (provision → build → validate → release)
+│   ├── deploy-staging.yml      # Push to main → auto-deploy staging (builds image, runs E2E preview gate)
+│   ├── deploy-production.yml   # Staging success → production promotion; manual dispatch can promote a SHA
 │   ├── preview.yml             # PR opened/updated → preview environment
 │   ├── cleanup-preview.yml     # PR closed → destroy preview environment
 │   ├── rollback.yml            # Manual trigger → roll back Cloud Run + Firebase Hosting
@@ -202,7 +202,7 @@ cd frontend && npm run test:e2e:stub
 
 ### 3. Full E2E Tests
 
-Playwright tests against a real deployed environment. Run automatically in CI after each deployment.
+Playwright tests against a real deployed environment. Run automatically for PR previews and as the staging pre-release gate.
 - Tests the full auth flow, todo CRUD, and multi-todo scenarios against real Cloud Run services and Firestore.
 
 ```bash
@@ -217,36 +217,42 @@ cd frontend && npm run test:e2e
 Feature branch ──► PR to main ──► CI checks ──► Merge to main
                        │                               │
                        │                               ▼
-                  ┌─────────┐           ┌──────────────────────────┐
-                  │ CI Jobs │           │    Auto-deploy staging   │
-                  │ • test  │           │  1. Terraform apply      │
-                  │ • lint  │           │  2. Build + push image   │
-                  │ • build │           │     tagged :<git-sha>    │
-                  └─────────┘           │  3. Deploy (no traffic)  │
-                       │                │  4. E2E tests on preview │
-                       ▼                │     channel (pre-flip)   │
-               PR preview env           │  5. Flip staging traffic │
-                                        │  6. Deploy frontend      │
-                                        └─────────────┬────────────┘
+                  ┌─────────┐           ┌────────────────────────────┐
+                  │ CI Jobs │           │    Auto-deploy staging     │
+                  │ • test  │           │  1. Terraform apply        │
+                  │ • lint  │           │  2. Build + push image     │
+                  │ • build │           │     tagged :<git-sha>      │
+                  └─────────┘           │  3. Deploy Cloud Run       │
+                       │                │     revision, no traffic   │
+                       ▼                │  4. Build frontend artifact│
+               PR preview env           │  5. E2E Firebase preview   │
+                                        │     pinned to new revision │
+                                        │  6. Deploy Firebase live   │
+                                        │     pinned to new revision │
+                                        └─────────────┬──────────────┘
                                                       │
-                                          Auto-triggered on staging success
-                                          (or manual workflow_dispatch)
+                                       Auto-triggered on staging success
+                                    (or manual workflow_dispatch with git_sha)
                                                       │
                                                       ▼
-                                        ┌──────────────────────────┐
-                                        │   Promote to production  │
-                                        │  1. Validate image SHA   │
-                                        │  2. Terraform plan       │
-         reviewer approval required --> │  3. [infra gate]         │
-                                        │  4. Terraform apply      │
-                                        │  5. Redeploy SAME image  │
-                                        │     :<git-sha>, no build │
-                                        │  6. Smoke test (pre-flip)│
-                                        │  7. Flip prod traffic    │
-                                        │  8. Deploy frontend      │
-                                        │  9. Post-flip health     │
-                                        │     watch (5 min)        │
-                                        └──────────────────────────┘
+                                        ┌────────────────────────────┐
+                                        │   Promote to production    │
+                                        │  1. Validate image SHA     │
+                                        │  2. Terraform plan         │
+         reviewer approval required --> │  3. [infra gate]           │
+                                        │  4. Terraform apply        │
+                                        │  5. Redeploy SAME image    │
+                                        │     :<git-sha>, no rebuild │
+                                        │  6. Build frontend artifact│
+                                        │  7. Smoke test new revision│
+                                        │  8. Deploy Firebase live   │
+                                        │     pinned to new revision │
+                                        │  9. Watch live health      │
+                                        │     and roll back Hosting  │
+                                        │     on failure             │
+                                        │ 10. Promote Cloud Run      │
+                                        │     direct traffic         │
+                                        └────────────────────────────┘
 ```
 
 ### Path-Based CI
@@ -280,7 +286,7 @@ On PR close, `cleanup-preview.yml` removes the revision tag, the per-PR Firestor
 
 ### Deployment Strategy
 
-Deployments follow a blue-green pattern: new revisions are deployed with `--no-traffic`, then traffic is flipped in a separate step. This means if the new revision fails to start, zero users are affected; smoke/E2E tests run against it before any real traffic arrives; and rollback is a traffic update — Cloud Run retains old revisions until its GC policy removes them.
+Deployments follow a pinned-release blue-green pattern. New Cloud Run revisions are deployed with `--no-traffic` and tagged `new`; Firebase Hosting releases are deployed with `pinTag`, so the live frontend and `/api/**` rewrites point at the same tested revision. Staging normally gates the live release with E2E tests against a temporary Firebase preview channel; first-time pinTag bootstrap can skip that gate once because Firebase cannot deploy a pinned preview while live is still unpinned. Production smoke-tests the no-traffic revision, deploys Firebase Hosting live pinned to that revision, watches the live URL, rolls back Hosting on failure, and only then moves Cloud Run direct traffic to the new revision.
 
 The promotion model is trunk-based and same-SHA: every image is built from a main commit on the way to staging, and production redeploys the exact `:<git-sha>` backend image that passed staging — never a rebuild. Terraform plan/apply and the frontend build also run from that same git SHA, so manual promotion of an older SHA does not mix an old backend with current frontend or infrastructure code.
 
@@ -289,10 +295,10 @@ The promotion model is trunk-based and same-SHA: every image is built from a mai
 
 1. **Provision** — Terraform applies any infrastructure changes
 2. **Build** — Docker image built, pushed to Artifact Registry tagged `:<git-sha>`
-3. **Deploy** — New Cloud Run revision deployed with `--no-traffic` (zero risk)
-4. **E2E** — Playwright tests run against a temporary Firebase preview channel that routes to the no-traffic revision (pre-flip gate)
-5. **Flip** — Traffic switched to the new revision only if E2E passed
-6. **Frontend** — Built and deployed to Firebase Hosting live channel
+3. **Deploy** — New Cloud Run revision deployed with `--no-traffic` and tagged `new`
+4. **Frontend artifact** — Frontend is built, audited, packaged, and reused by E2E and release
+5. **E2E** — Playwright tests run against a temporary Firebase preview channel pinned to the new revision; skipped once during first-time pinTag bootstrap
+6. **Release** — Firebase Hosting live channel is deployed from the tested artifact, pinned to the same new revision
 
 </details>
 
@@ -304,12 +310,13 @@ The promotion model is trunk-based and same-SHA: every image is built from a mai
 3. **Approve infra** — A reviewer inspects the plan in the `production-gate` GitHub environment and approves
 4. **Apply** — Terraform apply runs against `tfcd-prod`
 5. **Redeploy** — The exact `:<git-sha>` image that passed staging is redeployed to the prod Cloud Run service — no rebuild
-6. **Smoke test** — Health check and auth guard against the no-traffic revision (pre-flip)
-7. **Flip** — Traffic switched to the new revision
-8. **Frontend** — Built and deployed to Firebase Hosting live channel
-9. **Health watch** — Live frontend is polled every 30s for 5 minutes; auto-rolls back Cloud Run traffic if any poll fails
+6. **Frontend artifact** — Frontend is built, audited, packaged, and reused by release
+7. **Smoke test** — Health check and auth guard against the no-traffic revision
+8. **Release** — Firebase Hosting live channel is deployed from the artifact, pinned to the new revision
+9. **Health watch** — Live frontend is polled every 30s for 5 minutes; Firebase Hosting rolls back automatically if any poll fails
+10. **Promote direct traffic** — Cloud Run direct traffic moves to the new revision only after the live Firebase path stays healthy
 
-To promote a specific SHA (e.g., to skip a bad commit), trigger `deploy-production.yml` manually via `workflow_dispatch` and provide the SHA — short or full, copied from the staging deploy run name.
+To promote a specific SHA (e.g., to skip a bad commit), trigger `deploy-production.yml` manually via `workflow_dispatch` and provide a short or full SHA from `main`, copied from the staging deploy run name. If `git_sha` is omitted, the workflow promotes the selected Actions ref SHA after confirming its image exists.
 
 </details>
 
@@ -319,13 +326,13 @@ To promote a specific SHA (e.g., to skip a bad commit), trigger `deploy-producti
 
 **Prefer a git revert.** Revert the bad commit on `main` and let the normal pipeline redeploy — this keeps git history as the source of truth, avoids drift between `main` and what's actually running, and means the next deploy won't silently re-ship the broken revision.
 
-**Use `rollback.yml` only when speed matters more than history** (e.g., production is actively broken and a revert + full pipeline would take too long). Trigger it from the Actions UI, select the environment, and optionally pick a specific Cloud Run revision (defaults to the previous one). The workflow flips Cloud Run traffic and Firebase Hosting in one step. Follow up with a revert PR once the fire is out, so `main` matches production.
+**Use `rollback.yml` only when speed matters more than history** (e.g., production is actively broken and a revert + full pipeline would take too long). Trigger it from the Actions UI, select the environment, and optionally pick a specific Cloud Run revision (defaults to the previous one). The workflow moves Cloud Run traffic back and rolls Firebase Hosting back in the same run. Follow up with a revert PR once the fire is out, so `main` matches production.
 
 Production rollback requires approval via the `production-gate` GitHub environment — the same reviewer gate used for Terraform apply during deploys.
 
 ### Authentication to GCP from CI
 
-GitHub Actions authenticates to GCP via **Workload Identity Federation** (WIF) — no service account keys stored as secrets. GitHub's OIDC provider proves the workflow's identity, and GCP grants short-lived tokens. This is the modern best practice; long-lived JSON keys are a security liability.
+GitHub Actions authenticates to GCP via **Workload Identity Federation** (WIF) — no service account keys stored as secrets. GitHub's OIDC provider proves the workflow's identity, and GCP grants short-lived tokens. Firebase deploy and rollback steps use WIF-backed service account impersonation so `firebase-tools` gets normal ADC credentials without a long-lived JSON key.
 
 ## Infrastructure
 
@@ -336,7 +343,7 @@ For one-time bootstrap instructions, see [infra/SETUP.md](infra/SETUP.md).
 Two prefixes show up throughout the repo:
 
 - `tfcd-*` — **infra layer**: GCP projects, Terraform state bucket, Artifact Registry host, custom domain (`*.tfcd.app`)
-- `nnow-*` — **app layer**: Cloud Run service (`nnow-staging`, `nnow-prod`), Firestore database (`nnow-{env}`, `nnow-pr-{N}`), AR repo (`nnow/backend`), Python package
+- `nnow-*` — **app layer**: Cloud Run service (`nnow-nonprod`, `nnow-prod`), Firestore database (`nnow-{env}`, `nnow-pr-{N}`), AR repo (`nnow/backend`), Python package
 
 They intentionally differ so the app could be renamed without touching infra identifiers, and vice versa.
 
@@ -356,7 +363,7 @@ The `modules/environment/` module is reusable across staging and production. One
 - Cloud Run service (unified backend) with scaling config
 - IAM bindings
 
-Firebase Hosting custom domain registration, DNS A records, and ACME challenge TXT records are Terraform-managed in the `base` layer; only content deploys run outside Terraform (via the Firebase CI action). PR preview environments don't need a separate Terraform module — they reuse the staging Cloud Run service with a tagged revision and a per-PR Firestore database.
+Firebase Hosting custom domain registration, DNS A records, and ACME challenge TXT records are Terraform-managed in the `base` layer; only content deploys run outside Terraform through `firebase-tools`. PR preview environments don't need a separate Terraform module — they reuse the staging Cloud Run service with a tagged revision and a per-PR Firestore database.
 
 ### Token Lifecycle
 

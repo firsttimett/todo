@@ -1,11 +1,11 @@
 name: Promote to production
-run-name: "[${{ inputs.git_sha || github.event.workflow_run.head_sha }}] Promote to production"
+run-name: "[${{ inputs.git_sha || github.event.workflow_run.head_sha || github.sha }}] Promote to production"
 
 on:
   workflow_dispatch:
     inputs:
       git_sha:
-        description: "Full or short git SHA to promote (leave empty to promote the latest staging deploy)"
+        description: "Full or short git SHA on main to promote (leave empty to promote the selected workflow ref)"
         required: false
         type: string
   workflow_run:
@@ -36,6 +36,16 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Fetch main history for SHA resolution
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --prune --unshallow origin \
+              +refs/heads/main:refs/remotes/origin/main
+          else
+            git fetch --no-tags --prune origin \
+              +refs/heads/main:refs/remotes/origin/main
+          fi
+
       - name: Authenticate to GCP via Workload Identity Federation
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
@@ -46,7 +56,7 @@ jobs:
         id: resolve
         run: |
           INPUT_SHA="${{ inputs.git_sha || github.event.workflow_run.head_sha || github.sha }}"
-          FULL_SHA=$(git rev-parse "$INPUT_SHA")
+          FULL_SHA=$(git rev-parse "${INPUT_SHA}^{commit}")
           EXISTS=$(gcloud artifacts docker tags list \
             asia-southeast1-docker.pkg.dev/tfcd-infra/nnow/backend \
             --project=tfcd-infra \

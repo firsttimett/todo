@@ -160,6 +160,15 @@ Values that are the same everywhere, or only used in nonprod:
 | `WIF_RESOURCE_NAME` | secret | Output from `terraform output -raw workload_identity_provider` |
 | `GOOGLE_CLOUD_PROJECT` | variable | `tfcd-nonprod` |
 
+### Why Firebase uses service account impersonation (not direct WIF)
+
+Most GCP deploy steps use direct Workload Identity Federation because `gcloud`, Terraform, and Cloud Run deploy flows handle `external_account` credentials reliably.
+
+Firebase deploy and rollback steps intentionally use WIF plus service account impersonation. `firebase-tools` and parts of the Firebase Admin SDK have historically been less reliable with direct `external_account` credentials,
+while impersonated service account ADC behaves like normal Google service account credentials without requiring a long-lived JSON key.
+
+This is still keyless: GitHub receives only short-lived WIF credentials and may impersonate the narrowly scoped Firebase CI service accounts.
+
 ### Environment-level (Settings → Environments → `staging` \| `preview` \| `production`)
 
 Every row below differs between staging and production — use distinct values per environment so a leak or rotation on one side never affects the other. No need to set for empty cells because the value is the same as the repository-level value.
@@ -170,7 +179,6 @@ Every row below differs between staging and production — use distinct values p
 | `JWT_PUBLIC_KEY` | secret | Matching public key | Matching production public key |
 | `RESEND_API_KEY` | secret | Resend API key | Resend API key for production |
 | `RESEND_FROM_EMAIL` | secret | e.g. <ul><li>`noreply-staging@yourdomain.com`</li><li>`noreply-preview@yourdomain.com`</li></ul> | e.g. `noreply@yourdomain.com` |
-| `FIREBASE_SERVICE_ACCOUNT` | secret | `terraform output -raw firebase_service_account_key_staging \| base64 -d` | `terraform output -raw firebase_service_account_key_prod \| base64 -d` |
 | `GOOGLE_CLOUD_PROJECT` | variable |  | `tfcd-prod` |
 
 To generate a JWT key pair (signing and public key) for each environment:
@@ -208,7 +216,7 @@ Push to `main` to trigger `deploy-staging.yml`:
 git push origin main
 ```
 
-The CI pipeline runs: `terraform_plan` (applies on staging) → `deploy` (build + push image + Cloud Run no-traffic revision) → `e2e` (Playwright tests against a pre-flip Firebase preview channel) → `release` (flip traffic + Firebase Hosting live channel).
+The staging deploy provisions staging infrastructure, deploys a no-traffic Cloud Run revision, validates it through the staging Firebase preview gate, then releases Firebase Hosting live pinned to that revision.
 
 On first push, Terraform creates the Firestore database, Cloud Run service, and `allUsers` invoker binding. This can take a few minutes.
 
@@ -220,13 +228,15 @@ On first push, Terraform creates the Firestore database, Cloud Run service, and 
 
 The production custom domain (`todo.tfcd.app`), its hosting A record, and its ACME TXT record are already provisioned by the double-apply in Step 1.
 
-`deploy-production.yml` auto-triggers on successful completion of `deploy-staging.yml` (via `workflow_run`). It can also be invoked manually from the Actions UI via `workflow_dispatch`, optionally with a specific short or full git SHA to promote (defaults to the latest staging deploy):
+`deploy-production.yml` auto-triggers on successful completion of `deploy-staging.yml` (via `workflow_run`). It can also be invoked manually from the Actions UI via `workflow_dispatch`, optionally with a specific short or full git SHA from `main`. If omitted, the manual run promotes the selected Actions ref SHA after image validation:
 
 ```bash
 gh workflow run deploy-production.yml -f git_sha=<sha>
 ```
 
-Production redeploys the same `:<git-sha>` image that passed staging — no rebuild. The pipeline validates the image exists in Artifact Registry, runs `terraform_plan`, pauses on the `production-gate` environment for reviewer approval, applies Terraform, redeploys Cloud Run, runs a smoke test against the no-traffic revision, flips traffic, deploys the frontend, and polls the live frontend for 5 minutes with auto-rollback on failure.
+Production promotes the same `:<git-sha>` image that passed staging — no rebuild. The run validates the image, pauses at `production-gate` for Terraform approval, applies production infrastructure, then releases the same backend/frontend pair through the production deploy pipeline.
+
+For the detailed deploy order and rollback behavior, see [`README.md#how-code-gets-to-production`](../README.md#how-code-gets-to-production).
 
 ---
 

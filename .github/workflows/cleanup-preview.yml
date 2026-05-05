@@ -60,10 +60,17 @@ jobs:
             --format="value(name)" 2>/dev/null || true)
           echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-          # Impersonate firebase-cicd-nonprod for the Firebase Hosting API —
-          # the WIF principal itself has no firebasehosting.* roles.
-          FB_TOKEN=$(gcloud auth print-access-token \
-            --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com)
+      - name: Authenticate as Firebase CI service account
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com
+          project_id: tfcd-nonprod
+
+      - name: Check preview channel exists
+        id: channel
+        run: |
+          FB_TOKEN=$(gcloud auth print-access-token)
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
@@ -71,10 +78,17 @@ jobs:
           echo "channel_exists=$CHANNEL_EXISTS" >> $GITHUB_OUTPUT
 
       - name: Fail if no resources found
-        if: steps.check.outputs.tag_exists == 'false' && steps.check.outputs.db_exists == 'false' && steps.check.outputs.channel_exists == 'false'
+        if: steps.check.outputs.tag_exists == 'false' && steps.check.outputs.db_exists == 'false' && steps.channel.outputs.channel_exists == 'false'
         run: |
           echo "No preview resources found for ${{ env.TAG }}. Invalid PR number or already cleaned up."
           exit 1
+
+      - name: Authenticate to GCP via Workload Identity Federation for cloud cleanup
+        if: steps.check.outputs.tag_exists == 'true' || steps.check.outputs.db_exists == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          project_id: tfcd-infra
 
       - name: Remove Cloud Run revision tag
         if: steps.check.outputs.tag_exists == 'true'
@@ -94,11 +108,18 @@ jobs:
             --project=tfcd-nonprod \
             --quiet
 
-      - name: Remove Firebase Hosting preview channel
-        if: steps.check.outputs.channel_exists == 'true'
+      - name: Authenticate as Firebase CI service account for channel deletion
+        if: steps.channel.outputs.channel_exists == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com
+          project_id: tfcd-nonprod
+
+      - name: Delete Firebase Hosting preview channel
+        if: steps.channel.outputs.channel_exists == 'true'
         run: |
-          FB_TOKEN=$(gcloud auth print-access-token \
-            --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com)
+          FB_TOKEN=$(gcloud auth print-access-token)
           curl -sf -X DELETE \
             -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}"

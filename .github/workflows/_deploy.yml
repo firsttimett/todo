@@ -195,13 +195,13 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
       - name: Check live channel rewrite pin status
         id: check
         run: |
-          FIREBASE_CICD_SA="firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com"
-          TOKEN=$(gcloud auth print-access-token --impersonate-service-account="$FIREBASE_CICD_SA")
+          TOKEN=$(gcloud auth print-access-token)
           PINNED=$(curl -fsS \
             -H "Authorization: Bearer $TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/${{ inputs.firebase_project_id }}/sites/${{ inputs.firebase_project_id }}/channels/live/releases?pageSize=1" \
@@ -242,8 +242,53 @@ jobs:
           skip_build: ${{ inputs.skip_build }}
           update_env_vars: FIRESTORE_DATABASE=${{ inputs.firestore_database }}
 
+  frontend_artifact:
+    name: Build frontend artifact
+    runs-on: ubuntu-latest
+    needs: [terraform_plan, terraform_gate, terraform_apply]
+    if: |
+      always() &&
+      needs.terraform_plan.result == 'success' &&
+      (needs.terraform_gate.result == 'success' || needs.terraform_gate.result == 'skipped') &&
+      (needs.terraform_apply.result == 'success' || needs.terraform_apply.result == 'skipped')
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.git_sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=critical
+          npm run build
+
+      - name: Generate firebase.json for env
+        working-directory: frontend
+        run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
+
+      - name: Package frontend artifact
+        run: tar -czf frontend-release.tgz -C frontend dist firebase.json
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-release-${{ github.run_id }}
+          path: frontend-release.tgz
+          retention-days: 1
+
   e2e:
-    name: E2E tests (pre-flip)
+    name: E2E Firebase preview (staging only)
     # Skipped on bootstrap (live unpinned), refers to check_live_pin job for more details
     # release will pin live as a side effect, and e2e runs normally on subsequent deploys.
     if: |
@@ -251,9 +296,10 @@ jobs:
       inputs.run_e2e &&
       inputs.environment == 'staging' &&
       needs.deploy.result == 'success' &&
+      needs.frontend_artifact.result == 'success' &&
       needs.check_live_pin.outputs.pinned == 'yes'
     runs-on: ubuntu-latest
-    needs: [deploy, check_live_pin]
+    needs: [deploy, frontend_artifact, check_live_pin]
     environment:
       name: ${{ inputs.environment }}
 
@@ -266,7 +312,17 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-release-${{ github.run_id }}
+          path: /tmp/frontend-release
+
+      - name: Restore frontend artifact
+        run: tar -xzf /tmp/frontend-release/frontend-release.tgz -C frontend
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -281,9 +337,8 @@ jobs:
           npm ci
           npx playwright install chromium --with-deps
 
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
 
       - name: Compute short SHA for channel ID
         id: sha
@@ -291,22 +346,25 @@ jobs:
           SHA="${{ inputs.git_sha || github.sha }}"
           echo "short=${SHA:0:8}" >> $GITHUB_OUTPUT
 
-      - name: Generate firebase.json (rewrite pinned to new revision)
-        working-directory: frontend
-        run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
-
       - name: Deploy pre-flip preview channel
-        uses: FirebaseExtended/action-hosting-deploy@e2eda2e106cfa35cdbcf4ac9ddaf6c4756df2c8c # v0
         id: firebase-preview
+        working-directory: frontend
         env:
           FIREBASE_CLI_EXPERIMENTS: pintags
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ inputs.firebase_project_id }}
-          channelId: pre-${{ steps.sha.outputs.short }}
-          expires: 30m
-          entryPoint: frontend
+          FIREBASE_PROJECT: ${{ inputs.firebase_project_id }}
+          CHANNEL_ID: pre-${{ steps.sha.outputs.short }}
+        run: |
+          DEPLOY_JSON=$(firebase hosting:channel:deploy "$CHANNEL_ID" \
+            --project "$FIREBASE_PROJECT" \
+            --expires 30m \
+            --json)
+          echo "$DEPLOY_JSON"
+          DETAILS_URL=$(echo "$DEPLOY_JSON" | jq -r '[.. | objects | .url? | select(type == "string" and startswith("https://"))][0] // empty')
+          if [ -z "$DETAILS_URL" ]; then
+            echo "::error::Firebase CLI did not return a preview URL."
+            exit 1
+          fi
+          echo "details_url=$DETAILS_URL" >> "$GITHUB_OUTPUT"
 
       - name: Warm up new Cloud Run revision
         uses: ./.github/actions/warm-up-revision
@@ -331,7 +389,7 @@ jobs:
           retention-days: 7
 
   smoke:
-    name: Smoke test (pre-flip)
+    name: Smoke test new Cloud Run revision (prod only)
     if: inputs.environment == 'production'
     runs-on: ubuntu-latest
     needs: [deploy]
@@ -374,10 +432,11 @@ jobs:
   release:
     name: Release to ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    needs: [deploy, e2e, smoke]
+    needs: [deploy, frontend_artifact, e2e, smoke]
     if: |
       always() &&
       needs.deploy.result == 'success' &&
+      needs.frontend_artifact.result == 'success' &&
       (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') &&
       (needs.smoke.result == 'success' || needs.smoke.result == 'skipped')
     environment:
@@ -385,8 +444,8 @@ jobs:
       url: ${{ inputs.frontend_url }}
 
     outputs:
-      frontend_url: ${{ steps.firebase-deploy.outputs.details_url || inputs.frontend_url }}
-      prev_revision: ${{ steps.prev.outputs.revision }}
+      frontend_url: ${{ inputs.frontend_url }}
+      new_revision: ${{ steps.new.outputs.revision }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -397,69 +456,78 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
-      - name: Capture current serving revision
-        id: prev
-        run: |
-          PREV=$(gcloud run services describe nnow-${{ inputs.suffix }} \
-            --region asia-southeast1 \
-            --project ${{ inputs.gcp_project }} \
-            --format=json \
-            | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          traffic = data.get('status', {}).get('traffic', [])
-          for t in sorted(traffic, key=lambda x: x.get('percent', 0), reverse=True):
-              if not t.get('tag') and t.get('percent', 0) > 0:
-                  print(t.get('revisionName', ''))
-                  sys.exit(0)
-          sys.exit(0)
-          " 2>/dev/null || true)
-          echo "Previous revision: $PREV"
-          echo "revision=$PREV" >> $GITHUB_OUTPUT
+      - name: Download frontend artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-release-${{ github.run_id }}
+          path: /tmp/frontend-release
 
-      - name: Flip traffic to new revision
-        run: |
-          gcloud run services update-traffic nnow-${{ inputs.suffix }} \
-            --region asia-southeast1 \
-            --project ${{ inputs.gcp_project }} \
-            --to-tags new=100
+      - name: Restore frontend artifact
+        run: tar -xzf /tmp/frontend-release/frontend-release.tgz -C frontend
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend
-        working-directory: frontend
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Resolve new Cloud Run revision
+        id: new
         run: |
-          npm ci
-          npm audit --audit-level=critical
-          npm run build
+          NEW=$(gcloud run services describe nnow-${{ inputs.suffix }} \
+            --region asia-southeast1 \
+            --project ${{ inputs.gcp_project }} \
+            --format=json \
+            | python3 -c "
+          import json, sys
 
-      - name: Generate firebase.json for env
-        working-directory: frontend
-        run: ENV=${{ inputs.suffix }} envsubst < firebase.json.tpl > firebase.json
+          data = json.load(sys.stdin)
+          status = data.get('status', {})
+          latest = status.get('latestReadyRevisionName', '')
+          new_revision = ''
+
+          for traffic in status.get('traffic', []):
+              if traffic.get('tag') == 'new':
+                  new_revision = traffic.get('revisionName', '')
+                  break
+
+          if not new_revision:
+              sys.stderr.write('No Cloud Run revision tagged new was found.\n')
+              sys.exit(1)
+
+          if new_revision != latest:
+              sys.stderr.write(
+                  f'Cloud Run tag new points to {new_revision}, but latest ready revision is {latest}.\n'
+              )
+              sys.exit(1)
+
+          print(new_revision)
+          ")
+          echo "New revision: $NEW"
+          echo "revision=$NEW" >> $GITHUB_OUTPUT
 
       - name: Deploy frontend to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@e2eda2e106cfa35cdbcf4ac9ddaf6c4756df2c8c # v0
         id: firebase-deploy
+        working-directory: frontend
         env:
           FIREBASE_CLI_EXPERIMENTS: pintags
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ inputs.firebase_project_id }}
-          channelId: live
-          entryPoint: frontend
+          FIREBASE_PROJECT: ${{ inputs.firebase_project_id }}
+        run: |
+          firebase deploy \
+            --only hosting \
+            --project "$FIREBASE_PROJECT" \
+            --json
 
-  post_flip_watch:
-    name: Post-flip health watch
-    # Polls the live frontend every 30s for 5 minutes after the traffic flip.
-    # Rolls back Cloud Run traffic to the previous revision if any poll fails.
+  live_health_watch:
+    name: Watch live Firebase health (prod only)
+    # Polls the live frontend every 30s for 5 minutes after the Firebase Hosting
+    # live deploy. Rollback and Cloud Run traffic promotion are separate jobs so
+    # this polling job does not receive secrets or OIDC credentials.
     # Cloud Monitoring 5xx-rate check is a future enhancement once revision-level
     # metric filtering and IAM permissions are verified.
     #
@@ -469,24 +537,17 @@ jobs:
     if: always() && inputs.environment == 'production' && needs.release.result == 'success'
     runs-on: ubuntu-latest
     needs: [release]
+    permissions: {}
     environment:
       name: ${{ inputs.environment }}
 
     steps:
-      - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        with:
-          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
-          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-
-      - name: Watch health and roll back on failure
+      - name: Watch live health
+        id: watch
         env:
-          SERVICE: nnow-${{ inputs.suffix }}
-          PROJECT: ${{ inputs.gcp_project }}
-          PREV_REVISION: ${{ needs.release.outputs.prev_revision }}
           FRONTEND_URL: ${{ inputs.frontend_url }}
         run: |
-          echo "Watching for 5 minutes post-flip (10 polls × 30s)"
+          echo "Watching live Firebase Hosting for 5 minutes (10 polls × 30s)"
           FAILED=0
 
           for i in $(seq 1 10); do
@@ -501,16 +562,76 @@ jobs:
           done
 
           if [ "$FAILED" = "1" ]; then
-            if [ -n "$PREV_REVISION" ]; then
-              echo "Rolling back to $PREV_REVISION"
-              gcloud run services update-traffic "$SERVICE" \
-                --region asia-southeast1 \
-                --project "$PROJECT" \
-                --to-revisions "${PREV_REVISION}=100"
-            else
-              echo "No previous revision captured — manual rollback required via rollback.yml"
-            fi
+            echo "Health watch failed"
             exit 1
           fi
 
-          echo "Post-flip watch passed — deployment is stable"
+          echo "Live watch passed"
+
+  rollback_firebase_on_live_failure:
+    name: Roll back Firebase Hosting (prod only)
+    if: always() && inputs.environment == 'production' && needs.release.result == 'success' && needs.live_health_watch.result == 'failure'
+    runs-on: ubuntu-latest
+    needs: [release, live_health_watch]
+    permissions:
+      id-token: write
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Authenticate as Firebase CI service account
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Set up Node.js for Firebase rollback
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+
+      - name: Roll back Firebase Hosting
+        env:
+          FIREBASE_PROJECT: ${{ inputs.firebase_project_id }}
+        run: |
+          npm install -g firebase-tools
+          firebase hosting:rollback \
+            --project "$FIREBASE_PROJECT" \
+            --force
+
+  promote_cloudrun_direct_traffic:
+    name: Promote Cloud Run direct traffic (prod only)
+    if: always() && inputs.environment == 'production' && needs.release.result == 'success' && needs.live_health_watch.result == 'success'
+    runs-on: ubuntu-latest
+    needs: [release, live_health_watch]
+    permissions:
+      id-token: write
+    environment:
+      name: ${{ inputs.environment }}
+
+    steps:
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          service_account: run-traffic-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Move Cloud Run direct traffic
+        env:
+          SERVICE: nnow-${{ inputs.suffix }}
+          PROJECT: ${{ inputs.gcp_project }}
+          NEW_REVISION: ${{ needs.release.outputs.new_revision }}
+        run: |
+          if [ -n "$NEW_REVISION" ]; then
+            echo "Live watch passed; moving Cloud Run direct traffic to $NEW_REVISION"
+            gcloud run services update-traffic "$SERVICE" \
+              --region asia-southeast1 \
+              --project "$PROJECT" \
+              --to-revisions "${NEW_REVISION}=100"
+          else
+            echo "::warning::No new revision was captured; Cloud Run direct traffic was not changed."
+          fi
+
+          echo "Live watch passed — deployment is stable"
