@@ -26,6 +26,19 @@ locals {
     "roles/run.viewer",
   ])
 
+  # Minimal permissions for the production post-health traffic flip. This lets
+  # CI move direct Cloud Run traffic after Firebase Hosting has stayed healthy,
+  # without granting the Firebase deploy identity Cloud Run mutation rights.
+  cloud_run_traffic_cicd_permissions = [
+    "resourcemanager.projects.get",
+    "run.locations.get",
+    "run.operations.get",
+    "run.revisions.get",
+    "run.revisions.list",
+    "run.services.get",
+    "run.services.update",
+  ]
+
   # APIs for tfcd-infra only — shared infrastructure, no app workloads.
   infra_apis = toset([
     "artifactregistry.googleapis.com",
@@ -356,25 +369,33 @@ resource "google_storage_bucket_iam_member" "tf_plan_pr_tfstate" {
 # ---------------------------------------------------------------------------
 # Firebase Hosting CI/CD service account
 #
-# Intentionally a key-based SA rather than WIF: FirebaseExtended/action-hosting-deploy
-# requires a service account JSON key and does not support ambient ADC credentials.
-# Blast radius is limited to Firebase Hosting (deploy/delete releases only) on
-# nonprod (staging + PR previews) and prod. Rotate annually or after any team
-# member departure.
+# GitHub Actions authenticates with Workload Identity Federation and then
+# impersonates these environment-scoped service accounts for Firebase Hosting
+# deploy/delete/rollback operations. Firebase uses impersonation rather than
+# direct external_account credentials because firebase-tools / Firebase SDK
+# credential paths have historically been less reliable with direct WIF. This
+# remains keyless: no long-lived service account keys are created.
 # ---------------------------------------------------------------------------
 
 resource "google_service_account" "firebase_cicd_nonprod" {
   project      = google_project.infra.project_id
   account_id   = "firebase-cicd-nonprod"
   display_name = "Firebase Hosting CI/CD (nonprod)"
-  description  = "Used by FirebaseExtended/action-hosting-deploy in PR preview and staging deploy workflows."
+  description  = "Impersonated by GitHub Actions via WIF for PR preview and staging Firebase Hosting workflows."
 }
 
 resource "google_service_account" "firebase_cicd_prod" {
   project      = google_project.infra.project_id
   account_id   = "firebase-cicd-prod"
   display_name = "Firebase Hosting CI/CD (production)"
-  description  = "Used by FirebaseExtended/action-hosting-deploy in the production deploy workflow only."
+  description  = "Impersonated by GitHub Actions via WIF for production Firebase Hosting workflows."
+}
+
+resource "google_service_account" "run_traffic_cicd_prod" {
+  project      = google_project.infra.project_id
+  account_id   = "run-traffic-cicd-prod"
+  display_name = "Cloud Run traffic CI/CD (production)"
+  description  = "Impersonated by GitHub Actions via WIF to move production Cloud Run direct traffic after live health checks pass."
 }
 
 resource "google_project_iam_member" "firebase_cicd_nonprod" {
@@ -393,28 +414,40 @@ resource "google_project_iam_member" "firebase_cicd_prod" {
   depends_on = [google_firebase_project.prod]
 }
 
-resource "google_service_account_key" "firebase_cicd_nonprod" {
-  service_account_id = google_service_account.firebase_cicd_nonprod.name
+resource "google_project_iam_custom_role" "run_traffic_cicd_prod" {
+  project     = google_project.prod.project_id
+  role_id     = "cloudRunTrafficManager"
+  title       = "Cloud Run Traffic Manager"
+  description = "Allows CI to move production Cloud Run service traffic after live health checks pass."
+  permissions = local.cloud_run_traffic_cicd_permissions
+
+  depends_on = [google_project_service.env_apis]
 }
 
-# Allow the GitHub Actions WIF principal to impersonate firebase-cicd-nonprod.
-# Used by cleanup-preview.yml to call the Firebase Hosting REST API with a
-# token that has firebasehosting.admin, avoiding the need for a JSON key
-# in that workflow (FirebaseExtended/action-hosting-deploy still uses the key).
-resource "google_service_account_iam_member" "firebase_cicd_nonprod_wif_impersonation" {
+resource "google_project_iam_member" "run_traffic_cicd_prod" {
+  project = google_project.prod.project_id
+  role    = google_project_iam_custom_role.run_traffic_cicd_prod.name
+  member  = "serviceAccount:${google_service_account.run_traffic_cicd_prod.email}"
+}
+
+# Allow the GitHub Actions WIF principal to impersonate the Firebase CI service
+# accounts without broad token-signing permissions.
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_wif_user" {
   service_account_id = google_service_account.firebase_cicd_nonprod.name
-  role               = "roles/iam.serviceAccountTokenCreator"
+  role               = "roles/iam.workloadIdentityUser"
   member             = local.wif_repo
 }
 
-resource "google_service_account_iam_member" "firebase_cicd_prod_wif_impersonation" {
+resource "google_service_account_iam_member" "firebase_cicd_prod_wif_user" {
   service_account_id = google_service_account.firebase_cicd_prod.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = local.wif_repo
+  role               = "roles/iam.workloadIdentityUser"
+  member             = local.wif_main
 }
 
-resource "google_service_account_key" "firebase_cicd_prod" {
-  service_account_id = google_service_account.firebase_cicd_prod.name
+resource "google_service_account_iam_member" "run_traffic_cicd_prod_wif_user" {
+  service_account_id = google_service_account.run_traffic_cicd_prod.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = local.wif_main
 }
 
 # ---------------------------------------------------------------------------
@@ -806,17 +839,6 @@ output "domain_nameservers" {
   value       = google_dns_managed_zone.tfcd_app.name_servers
 }
 
-output "firebase_service_account_key_staging" {
-  description = "Base64-encoded JSON key for the nonprod Firebase CI SA — store as FIREBASE_SERVICE_ACCOUNT in the 'staging' GitHub environment (also used by PR preview channel deploys)."
-  value       = google_service_account_key.firebase_cicd_nonprod.private_key
-  sensitive   = true
-}
-
-output "firebase_service_account_key_prod" {
-  description = "Base64-encoded JSON key for production — store as FIREBASE_SERVICE_ACCOUNT in the 'production' GitHub environment."
-  value       = google_service_account_key.firebase_cicd_prod.private_key
-  sensitive   = true
-}
 
 output "dnssec_ds_record" {
   description = "DS record for tfcd.app — publish to the registrar after DNSSEC is enabled on the zone: gcloud domains registrations configure dns tfcd.app --cloud-dns-zone=projects/tfcd-infra/managedZones/tfcd-app --project=tfcd-infra"
