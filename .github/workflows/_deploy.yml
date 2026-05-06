@@ -439,7 +439,7 @@ jobs:
 
     outputs:
       frontend_url: ${{ inputs.frontend_url }}
-      new_revision: ${{ steps.new.outputs.revision }}
+      new_revision: ${{ steps.resolve-new.outputs.revision }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
