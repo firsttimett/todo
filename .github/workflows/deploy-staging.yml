@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/deploy-staging.yml"
       - ".github/workflows/_deploy.yml"
+      - ".github/actions/**"
       - "infra/terraform/environments/staging/**"
       - "infra/terraform/modules/**"
       - "backend/**"
