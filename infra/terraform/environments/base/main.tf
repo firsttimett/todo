@@ -430,12 +430,20 @@ resource "google_project_iam_member" "run_traffic_cicd_prod" {
   member  = "serviceAccount:${google_service_account.run_traffic_cicd_prod.email}"
 }
 
-# Allow the GitHub Actions WIF principal to impersonate the Firebase CI service
-# accounts without broad token-signing permissions.
-resource "google_service_account_iam_member" "firebase_cicd_nonprod_wif_user" {
+# Allow GitHub Actions WIF principals to impersonate the Firebase CI service
+# accounts without broad token-signing permissions. Nonprod is split by event:
+# PR workflows can manage preview channels, while main can deploy and roll back
+# staging.
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_pr_wif_user" {
   service_account_id = google_service_account.firebase_cicd_nonprod.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = local.wif_repo
+  member             = local.wif_pr
+}
+
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_main_wif_user" {
+  service_account_id = google_service_account.firebase_cicd_nonprod.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = local.wif_main
 }
 
 resource "google_service_account_iam_member" "firebase_cicd_prod_wif_user" {
