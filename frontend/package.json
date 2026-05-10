@@ -34,13 +34,9 @@
     "patch-package": "^8.0.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.0",
-    "vite": "^8.0.7",
-    "vite-plugin-pwa": "^1.2.0",
+    "vite": "^8.0.11",
+    "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.2"
   },
-  "_comment_for_overrides": "Using overrides to fix vulnerability",
-  "overrides": {
-    "lodash": "4.18.1",
-    "serialize-javascript": "7.0.5"
-  }
+  "_comment_for_overrides": "Using overrides to fix vulnerability"
 }
