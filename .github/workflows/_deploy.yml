@@ -315,6 +315,35 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
+          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Prepare warm-up token
+        id: warmup-prep
+        run: |
+          SERVICE_JSON=$(gcloud run services describe nnow-${{ inputs.suffix }} \
+            --project=${{ inputs.gcp_project }} \
+            --region=asia-southeast1 \
+            --format=json)
+          SERVICE_URL=$(echo "$SERVICE_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin)['status']['url'])")
+          REVISION_URL=$(echo "$SERVICE_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          for t in data.get('status', {}).get('traffic', []):
+              if t.get('tag') == 'new':
+                  print(t.get('url', ''))
+                  sys.exit(0)
+          ")
+          TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account=firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com \
+            --audiences="$SERVICE_URL")
+          echo "revision_url=$REVISION_URL" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$TOKEN"
+          echo "id_token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate as Firebase CI service account
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
           service_account: firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com
           project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
 
@@ -363,9 +392,8 @@ jobs:
       - name: Warm up new Cloud Run revision
         uses: ./.github/actions/warm-up-revision
         with:
-          service: nnow-${{ inputs.suffix }}
-          project: ${{ inputs.gcp_project }}
-          tag: new
+          revision_url: ${{ steps.warmup-prep.outputs.revision_url }}
+          id_token: ${{ steps.warmup-prep.outputs.id_token }}
 
       - name: Run E2E tests against pre-flip preview
         working-directory: frontend
@@ -399,11 +427,12 @@ jobs:
 
       - name: Smoke test new revision
         run: |
-          REVISION_URL=$(gcloud run services describe nnow-${{ inputs.suffix }} \
+          SERVICE_JSON=$(gcloud run services describe nnow-${{ inputs.suffix }} \
             --project=${{ inputs.gcp_project }} \
             --region=asia-southeast1 \
-            --format=json \
-            | python3 -c "
+            --format=json)
+          SERVICE_URL=$(echo "$SERVICE_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin)['status']['url'])")
+          REVISION_URL=$(echo "$SERVICE_JSON" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           for t in data.get('status', {}).get('traffic', []):
@@ -414,12 +443,16 @@ jobs:
           ")
           echo "Smoke-testing revision: $REVISION_URL"
 
-          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$REVISION_URL/health")
+          TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account="firebase-cicd-${{ inputs.suffix }}@tfcd-infra.iam.gserviceaccount.com" \
+            --audiences="$SERVICE_URL")
+
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "$REVISION_URL/health")
           [ "$STATUS" = "200" ] || { echo "Health check failed: $STATUS"; exit 1; }
           echo "Health: OK"
 
-          # Expect 401 without a token — 5xx or connection error means something is wrong
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REVISION_URL/api/todo/todos" || echo "000")
+          # Expect 401 from app auth guard — Cloud Run IAM passes the request through
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "$REVISION_URL/api/todo/todos" || echo "000")
           [ "$STATUS" = "401" ] || { echo "Auth guard failed: expected 401, got $STATUS"; exit 1; }
           echo "Auth guard: OK"
 

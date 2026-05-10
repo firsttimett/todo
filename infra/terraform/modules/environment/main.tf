@@ -204,10 +204,23 @@ resource "google_cloud_run_v2_service" "app" {
   }
 }
 
-resource "google_cloud_run_v2_service_iam_member" "app_invoker" {
+data "google_project" "env" {
+  project_id = var.project_id
+}
+
+resource "google_cloud_run_v2_service_iam_member" "app_invoker_hosting" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.app.name
   role     = "roles/run.invoker"
-  member   = "allUsers"
+  member   = "serviceAccount:service-${data.google_project.env.number}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "app_invoker_extra" {
+  for_each = toset(var.extra_invoker_members)
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.app.name
+  role     = "roles/run.invoker"
+  member   = each.value
 }

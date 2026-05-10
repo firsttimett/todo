@@ -10,6 +10,7 @@ module "env" {
   resend_api_key        = var.resend_api_key
   resend_from_email     = var.resend_from_email
   otp_bypass_code       = var.otp_bypass_code
+  extra_invoker_members = ["serviceAccount:firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com"]
 }
 
 output "app_url" {

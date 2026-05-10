@@ -64,6 +64,29 @@ jobs:
           revision_tag: ${{ env.TAG }}
           update_env_vars: FIRESTORE_DATABASE=${{ env.DB }}
 
+      - name: Prepare warm-up token
+        id: warmup-prep
+        run: |
+          SERVICE_JSON=$(gcloud run services describe nnow-nonprod \
+            --project=tfcd-nonprod \
+            --region=asia-southeast1 \
+            --format=json)
+          SERVICE_URL=$(echo "$SERVICE_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin)['status']['url'])")
+          REVISION_URL=$(echo "$SERVICE_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          for t in data.get('status', {}).get('traffic', []):
+              if t.get('tag') == '${{ env.TAG }}':
+                  print(t.get('url', ''))
+                  sys.exit(0)
+          ")
+          TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account=firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com \
+            --audiences="$SERVICE_URL")
+          echo "revision_url=$REVISION_URL" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$TOKEN"
+          echo "id_token=$TOKEN" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
@@ -118,9 +141,8 @@ jobs:
       - name: Warm up Cloud Run revision
         uses: ./.github/actions/warm-up-revision
         with:
-          service: nnow-nonprod
-          project: tfcd-nonprod
-          tag: ${{ env.TAG }}
+          revision_url: ${{ steps.warmup-prep.outputs.revision_url }}
+          id_token: ${{ steps.warmup-prep.outputs.id_token }}
 
       - name: Run E2E tests against preview channel
         working-directory: frontend
