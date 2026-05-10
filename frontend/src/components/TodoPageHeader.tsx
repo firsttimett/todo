@@ -15,12 +15,12 @@ function resolveAvatarUrl(picture: string): string | null {
   if (!raw) return null;
 
   if (raw.startsWith('//')) {
-    return `https:${raw}`;
+    return null;
   }
 
   try {
     const url = new URL(raw, window.location.origin);
-    if (url.protocol === 'https:' || url.protocol === 'http:') {
+    if (url.origin === window.location.origin) {
       return url.toString();
     }
   } catch {
