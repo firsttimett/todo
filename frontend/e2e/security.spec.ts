@@ -15,6 +15,7 @@ const EXPECTED_CSP = [
   "form-action 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",
+  'trusted-types nnow-sw',
   "require-trusted-types-for 'script'",
 ].join('; ');
 
