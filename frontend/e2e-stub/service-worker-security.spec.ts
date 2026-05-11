@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { stubAnonymousMode } from './fixtures';
 
+// Refers to firebase.json.tpl for source of truth
 const FIREBASE_CSP = [
   "default-src 'self'",
   "script-src 'self'",
