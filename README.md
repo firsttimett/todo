@@ -28,7 +28,7 @@ A todo application built on Google Cloud Platform, with passwordless auth, infra
 
 Firebase Hosting serves the frontend and rewrites `/api/**` to a single Cloud Run service that handles both auth and todo routes. The frontend and API share the same domain, so no CORS configuration is needed.
 
-> **No load balancer:** Cloud Run uses `INGRESS_TRAFFIC_ALL`, so Firebase Hosting rewrites reach it directly. The trade-off: the `*.run.app` URL remains publicly reachable, bypassing Firebase's edge entirely. The more secure setup — GCP HTTPS LB + Serverless NEG (`INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`) — would close that bypass and add Cloud Armor (WAF/DDoS), but a forwarding rule costs ~$18.25/month regardless of traffic.
+> **No load balancer:** Cloud Run uses `INGRESS_TRAFFIC_ALL`, so Firebase Hosting rewrites reach it directly. `roles/run.invoker` is restricted to the Firebase Hosting service agent and CI service accounts — the `*.run.app` URL returns 403 to unauthenticated callers. The more hardened setup — GCP HTTPS LB + Serverless NEG (`INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER`) — would add Cloud Armor (WAF/DDoS), but a forwarding rule costs ~$18.25/month regardless of traffic.
 
 ## Services
 
@@ -390,6 +390,7 @@ Logout:   POST /auth/logout → cookie cleared
 - **OTP codes:** Stored as hashes with 10-minute TTL — even if Firestore is compromised, the codes are hashed
 - **User isolation:** Firestore subcollection structure (`users/{uid}/todos`) makes cross-user data access structurally impossible
 - **GCP auth:** Workload Identity Federation — no long-lived service account keys
-- **Ingress:** Cloud Run service is `INGRESS_TRAFFIC_ALL` — Firebase Hosting rewrites routes to it directly; no load balancer needed
+- **Ingress:** `INGRESS_TRAFFIC_ALL` with `roles/run.invoker` restricted to the Firebase Hosting service agent; the `*.run.app` URL returns 403 to unauthenticated callers
+- **Content Security Policy:** strict CSP enforced via Firebase Hosting headers — `script-src 'self'`, `style-src 'self'`, `require-trusted-types-for 'script'`; blocks XSS and injection even if attacker controls page content
 
 </details>

@@ -84,3 +84,9 @@ variable "deletion_protection" {
   default     = true
   description = "Whether to enable deletion protection on the Cloud Run service."
 }
+
+variable "extra_invoker_members" {
+  type        = list(string)
+  default     = []
+  description = "Additional members to grant roles/run.invoker on the Cloud Run service, beyond the Firebase Hosting service agent."
+}

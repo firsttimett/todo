@@ -458,6 +458,29 @@ resource "google_service_account_iam_member" "run_traffic_cicd_prod_wif_user" {
   member             = local.wif_main
 }
 
+# Allow WIF principals to generate ID tokens for the firebase-cicd SAs so
+# gcloud auth print-identity-token --impersonate-service-account --audiences
+# works in CI. workloadIdentityUser alone only grants access token exchange;
+# serviceAccountTokenCreator adds iam.serviceAccounts.getOpenIdToken which
+# is needed for ID tokens with custom audiences (required by Cloud Run IAM).
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_pr_wif_token_creator" {
+  service_account_id = google_service_account.firebase_cicd_nonprod.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.wif_pr
+}
+
+resource "google_service_account_iam_member" "firebase_cicd_nonprod_main_wif_token_creator" {
+  service_account_id = google_service_account.firebase_cicd_nonprod.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.wif_main
+}
+
+resource "google_service_account_iam_member" "firebase_cicd_prod_wif_token_creator" {
+  service_account_id = google_service_account.firebase_cicd_prod.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = local.wif_main
+}
+
 # ---------------------------------------------------------------------------
 # Per-env app service accounts + Firestore access
 #
