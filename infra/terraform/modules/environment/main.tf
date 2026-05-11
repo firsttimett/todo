@@ -208,12 +208,24 @@ data "google_project" "env" {
   project_id = var.project_id
 }
 
+# Materialize the Firebase Hosting service agent before the IAM binding below
+# references it. This SA only exists after this resource is applied or after
+# Firebase Hosting is first used in the project — enabling the API alone is
+# not sufficient.
+resource "google_project_service_identity" "firebasehosting" {
+  provider = google-beta
+  project  = var.project_id
+  service  = "firebasehosting.googleapis.com"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "app_invoker_hosting" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.app.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:service-${data.google_project.env.number}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
+
+  depends_on = [google_project_service_identity.firebasehosting]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "app_invoker_extra" {
