@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
+        injectRegister: false,
         registerType: 'autoUpdate',
         manifest: {
           name: 'Not Now',
@@ -37,6 +38,8 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
+          skipWaiting: true,
+          clientsClaim: true,
           globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
           // Prevent the SW from intercepting API routes — without this,
           // navigations to /api/auth/callback are served index.html by the SW
