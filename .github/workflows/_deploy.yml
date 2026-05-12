@@ -574,8 +574,12 @@ jobs:
     # Applies the Firebase Hosting service agent IAM binding after firebase deploy
     # has run. On established environments this is a no-op. On brand-new
     # environments the first terraform_apply skips app_invoker_hosting (the SA
-    # doesn't exist yet); this job creates it now that firebase deploy has
-    # provisioned the SA as a side effect.
+    # doesn't exist yet). The SA is provisioned lazily by Google — not by firebase
+    # deploy, but by Firebase Hosting's proxy infrastructure the first time it
+    # routes a request to an auth-required Cloud Run service. To trigger this, the
+    # step below makes a probe request to the live Firebase Hosting URL (which will
+    # return 403 — expected, no invoker binding yet) and polls until the SA appears
+    # in IAM. Once visible, terraform apply creates the binding.
     #
     # No terraform_gate approval needed — the only possible change is one IAM
     # binding that is fully determined by the module. A fresh plan is produced
@@ -619,6 +623,46 @@ jobs:
       - name: Terraform init
         working-directory: ${{ inputs.terraform_dir }}
         run: terraform init
+
+      - name: Wait for Firebase Hosting SA provisioning
+        run: |
+          PROJECT_NUMBER=$(gcloud projects describe "${{ inputs.gcp_project }}" \
+            --format='value(projectNumber)')
+          SA="service-${PROJECT_NUMBER}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
+
+          check_sa() {
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${SA}")
+            [ "$HTTP_CODE" = "200" ]
+          }
+
+          if check_sa; then
+            echo "Firebase Hosting SA already exists"
+            exit 0
+          fi
+
+          # The SA is not yet provisioned. Make a request through the live Firebase
+          # Hosting URL to a Cloud Run rewrite path — Firebase Hosting's proxy creates
+          # its service agent SA before forwarding the call, even if Cloud Run returns
+          # 403 (no invoker binding yet).
+          echo "SA absent — probing live channel to trigger provisioning"
+          curl -s -o /dev/null -w "Live probe: HTTP %{http_code}\n" \
+            --max-time 15 \
+            "${{ inputs.frontend_url }}/api/health" || true
+
+          # Poll up to 3 minutes for the SA to appear in IAM
+          for i in $(seq 1 18); do
+            sleep 10
+            if check_sa; then
+              echo "Firebase Hosting SA provisioned after $((i * 10))s"
+              exit 0
+            fi
+            echo "Waiting for SA... ($i/18)"
+          done
+
+          echo "::error::Firebase Hosting SA was not provisioned within 3 minutes."
+          exit 1
 
       - name: Terraform plan
         working-directory: ${{ inputs.terraform_dir }}
