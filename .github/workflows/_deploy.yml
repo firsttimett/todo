@@ -93,21 +93,27 @@ jobs:
         run: terraform init
 
       - name: Detect Firebase Hosting SA bootstrap status
+        id: bootstrap-check
         working-directory: ${{ inputs.terraform_dir }}
         run: |
           # The Firebase Hosting service agent SA is provisioned lazily by Google
           # on the first firebase deploy — it cannot be created via Terraform. On
-          # brand-new environments the SA does not exist yet, so we skip the
-          # app_invoker_hosting IAM binding here and let terraform_apply_post
-          # create it after firebase deploy has run.
-          if terraform state list | grep -q 'app_invoker_hosting'; then
-            echo "TF_VAR_firebase_hosting_sa_bootstrapped=true" >> "$GITHUB_ENV"
+          # brand-new environments (or the first deploy after switching from allUsers)
+          # the SA does not exist yet, so we skip the app_invoker_hosting IAM binding
+          # here and let terraform_apply_post create it after firebase deploy has run.
+          #
+          # Using GITHUB_OUTPUT + step-level env (not GITHUB_ENV) so the value is
+          # referenced explicitly in the plan step and cannot be shadowed by defaults.
+          if terraform state list 2>/dev/null | grep -q 'app_invoker_hosting'; then
+            echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
           else
-            echo "TF_VAR_firebase_hosting_sa_bootstrapped=false" >> "$GITHUB_ENV"
+            echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Terraform plan
         working-directory: ${{ inputs.terraform_dir }}
+        env:
+          TF_VAR_firebase_hosting_sa_bootstrapped: ${{ steps.bootstrap-check.outputs.bootstrapped || 'false' }}
         run: terraform plan -out=tfplan
 
       - name: Post plan to job summary
