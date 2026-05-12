@@ -1,16 +1,17 @@
 module "env" {
-  source                = "../../modules/environment"
-  project_id            = "tfcd-nonprod"
-  env_name              = "nonprod"
-  service_account_email = "nnow-nonprod-sa@tfcd-nonprod.iam.gserviceaccount.com"
-  min_instances         = 0
-  max_instances         = 1
-  jwt_public_key        = var.jwt_public_key
-  jwt_private_key       = var.jwt_private_key
-  resend_api_key        = var.resend_api_key
-  resend_from_email     = var.resend_from_email
-  otp_bypass_code       = var.otp_bypass_code
-  extra_invoker_members = ["serviceAccount:firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com"]
+  source                           = "../../modules/environment"
+  project_id                       = "tfcd-nonprod"
+  env_name                         = "nonprod"
+  service_account_email            = "nnow-nonprod-sa@tfcd-nonprod.iam.gserviceaccount.com"
+  min_instances                    = 0
+  max_instances                    = 1
+  jwt_public_key                   = var.jwt_public_key
+  jwt_private_key                  = var.jwt_private_key
+  resend_api_key                   = var.resend_api_key
+  resend_from_email                = var.resend_from_email
+  otp_bypass_code                  = var.otp_bypass_code
+  extra_invoker_members            = ["serviceAccount:firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com"]
+  firebase_hosting_sa_bootstrapped = var.firebase_hosting_sa_bootstrapped
 }
 
 output "app_url" {
