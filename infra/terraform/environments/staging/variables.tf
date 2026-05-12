@@ -27,3 +27,9 @@ variable "otp_bypass_code" {
   default     = ""
   description = "Fixed OTP code for automated testing. Leave empty for random codes."
 }
+
+variable "firebase_hosting_sa_bootstrapped" {
+  type        = bool
+  default     = true
+  description = "Whether the Firebase Hosting service agent SA already exists. Set to false on first deploy; CI detects this automatically."
+}
