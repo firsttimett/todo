@@ -94,6 +94,7 @@ jobs:
 
       - name: Detect Firebase Hosting SA bootstrap status
         id: bootstrap-check
+        working-directory: ${{ inputs.terraform_dir }}
         run: |
           # The Firebase Hosting service agent SA is provisioned lazily by Google
           # on the first firebase deploy — it cannot be created via Terraform. On
@@ -115,6 +116,12 @@ jobs:
             echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
           else
             echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
+            # SA doesn't exist in GCP — any app_invoker_hosting state entry is stale
+            # (the binding was never successfully created). Remove it so the plan does
+            # not include a destroy that triggers the same IAM validation error.
+            terraform state list 2>/dev/null \
+              | grep 'app_invoker_hosting' \
+              | xargs -r terraform state rm
           fi
 
       - name: Terraform plan
