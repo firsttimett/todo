@@ -209,6 +209,7 @@ data "google_project" "env" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "app_invoker_hosting" {
+  count    = var.firebase_hosting_sa_bootstrapped ? 1 : 0
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.app.name
