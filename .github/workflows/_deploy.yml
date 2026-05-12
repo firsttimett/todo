@@ -94,7 +94,6 @@ jobs:
 
       - name: Detect Firebase Hosting SA bootstrap status
         id: bootstrap-check
-        working-directory: ${{ inputs.terraform_dir }}
         run: |
           # The Firebase Hosting service agent SA is provisioned lazily by Google
           # on the first firebase deploy — it cannot be created via Terraform. On
@@ -102,9 +101,17 @@ jobs:
           # the SA does not exist yet, so we skip the app_invoker_hosting IAM binding
           # here and let terraform_apply_post create it after firebase deploy has run.
           #
-          # Using GITHUB_OUTPUT + step-level env (not GITHUB_ENV) so the value is
-          # referenced explicitly in the plan step and cannot be shadowed by defaults.
-          if terraform state list 2>/dev/null | grep -q 'app_invoker_hosting'; then
+          # Query the GCP IAM API directly instead of reading Terraform state: a
+          # failed previous apply can leave app_invoker_hosting[0] in state even
+          # though the SA was never actually created in GCP.
+          PROJECT_NUMBER=$(gcloud projects describe "${{ inputs.gcp_project }}" \
+            --format='value(projectNumber)')
+          SA="service-${PROJECT_NUMBER}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${SA}")
+          echo "Firebase Hosting SA HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
           else
             echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
