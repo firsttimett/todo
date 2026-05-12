@@ -70,6 +70,8 @@ jobs:
       TF_VAR_resend_api_key: ${{ secrets.RESEND_API_KEY }}
       TF_VAR_resend_from_email: ${{ secrets.RESEND_FROM_EMAIL }}
       TF_VAR_otp_bypass_code: ${{ inputs.use_otp_bypass && secrets.OTP_BYPASS_CODE || '' }}
+    outputs:
+      firebase_hosting_bootstrapped: ${{ steps.bootstrap-check.outputs.bootstrapped }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -313,17 +315,22 @@ jobs:
 
   e2e:
     name: E2E Firebase preview (staging only)
-    # Skipped on bootstrap (live unpinned), refers to check_live_pin job for more details
-    # release will pin live as a side effect, and e2e runs normally on subsequent deploys.
+    # Skipped on two bootstrap conditions:
+    # 1. Live channel unpinned — release will pin it as a side effect; e2e runs on subsequent deploys.
+    # 2. Firebase Hosting SA not yet bootstrapped — the SA is provisioned lazily on the first firebase
+    #    deploy (live channel). Without it, Firebase Hosting cannot authenticate to Cloud Run and every
+    #    request returns 403. Skipping here lets release run, which provisions the SA; terraform_apply_post
+    #    then creates the roles/run.invoker binding. E2e runs normally on subsequent deploys.
     if: |
       always() &&
       inputs.run_e2e &&
       inputs.environment == 'staging' &&
       needs.deploy.result == 'success' &&
       needs.frontend_artifact.result == 'success' &&
-      needs.check_live_pin.outputs.pinned == 'yes'
+      needs.check_live_pin.outputs.pinned == 'yes' &&
+      needs.terraform_plan.outputs.firebase_hosting_bootstrapped == 'yes'
     runs-on: ubuntu-latest
-    needs: [deploy, frontend_artifact, check_live_pin]
+    needs: [deploy, frontend_artifact, check_live_pin, terraform_plan]
     environment:
       name: ${{ inputs.environment }}
 
