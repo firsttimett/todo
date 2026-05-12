@@ -603,6 +603,17 @@ resource "google_artifact_registry_repository_iam_member" "cloud_run_ar_reader" 
   depends_on = [google_project_service.env_apis]
 }
 
+# gcloud run services update-traffic validates the caller has image read access
+# before shifting traffic. The custom cloudRunTrafficManager role only covers
+# Cloud Run permissions; AR is in tfcd-infra so it must be granted here.
+resource "google_artifact_registry_repository_iam_member" "run_traffic_cicd_prod_ar_reader" {
+  project    = google_project.infra.project_id
+  location   = google_artifact_registry_repository.tfcd.location
+  repository = google_artifact_registry_repository.tfcd.repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.run_traffic_cicd_prod.email}"
+}
+
 # ---------------------------------------------------------------------------
 # Domain registration + parent DNS zone (in tfcd-infra)
 #
