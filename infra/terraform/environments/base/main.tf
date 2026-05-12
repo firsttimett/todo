@@ -603,15 +603,27 @@ resource "google_artifact_registry_repository_iam_member" "cloud_run_ar_reader" 
   depends_on = [google_project_service.env_apis]
 }
 
-# gcloud run services update-traffic validates the caller has image read access
-# before shifting traffic. The custom cloudRunTrafficManager role only covers
-# Cloud Run permissions; AR is in tfcd-infra so it must be granted here.
+# gcloud run services update-traffic requires the caller to have both image read
+# access and actAs on the Cloud Run runtime SA — Cloud Run validates these before
+# accepting any service mutation, including traffic-only updates. The custom
+# cloudRunTrafficManager role covers Cloud Run permissions within tfcd-prod;
+# the two bindings below cover the cross-cutting requirements that the
+# project-scoped custom role cannot reach.
+#
+# AR reader: cross-project (AR is in tfcd-infra, not tfcd-prod)
 resource "google_artifact_registry_repository_iam_member" "run_traffic_cicd_prod_ar_reader" {
   project    = google_project.infra.project_id
   location   = google_artifact_registry_repository.tfcd.location
   repository = google_artifact_registry_repository.tfcd.repository_id
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${google_service_account.run_traffic_cicd_prod.email}"
+}
+
+# actAs: scoped to the Cloud Run runtime SA only, not all SAs in tfcd-prod
+resource "google_service_account_iam_member" "run_traffic_cicd_prod_actAs_app" {
+  service_account_id = google_service_account.app_prod.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.run_traffic_cicd_prod.email}"
 }
 
 # ---------------------------------------------------------------------------
