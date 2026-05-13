@@ -48,17 +48,27 @@ jobs:
       - name: Check preview resources exist
         id: check
         run: |
-          TAG_COUNT=$(gcloud run services describe nnow-nonprod \
+          TAGS=$(gcloud run services describe nnow-nonprod \
             --region asia-southeast1 \
             --project tfcd-nonprod \
-            --format="value(status.traffic[].tag)" | tr ';' '\n' | grep -c "^${{ env.TAG }}$" || true)
-          echo "tag_exists=$([[ $TAG_COUNT -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+            --format="value(status.traffic[].tag)")
+          if printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq "${{ env.TAG }}"; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          DB_NAME=$(gcloud firestore databases describe \
+          if DB_OUT=$(gcloud firestore databases describe \
             --database=${{ env.DB }} \
             --project=tfcd-nonprod \
-            --format="value(name)" 2>/dev/null || true)
-          echo "db_exists=$([[ -n "$DB_NAME" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+            --format="value(name)" 2>&1); then
+            echo "db_exists=true" >> "$GITHUB_OUTPUT"
+          elif echo "$DB_OUT" | grep -Eqi "not found|does not exist"; then
+            echo "db_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$DB_OUT"
+            exit 1
+          fi
 
       - name: Authenticate as Firebase CI service account
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -71,17 +81,29 @@ jobs:
         id: channel
         run: |
           FB_TOKEN=$(gcloud auth print-access-token)
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          HTTP_STATUS=$(curl -sS -o /tmp/firebase-channel-response.json -w "%{http_code}" \
             -H "Authorization: Bearer $FB_TOKEN" \
             "https://firebasehosting.googleapis.com/v1beta1/projects/tfcd-nonprod/sites/tfcd-nonprod/channels/${{ env.TAG }}")
-          CHANNEL_EXISTS=$([[ "$HTTP_STATUS" == "200" ]] && echo true || echo false)
-          echo "channel_exists=$CHANNEL_EXISTS" >> $GITHUB_OUTPUT
+          case "$HTTP_STATUS" in
+            200)
+              echo "channel_exists=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "channel_exists=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              cat /tmp/firebase-channel-response.json
+              echo "Unexpected Firebase Hosting API status: $HTTP_STATUS"
+              exit 1
+              ;;
+          esac
 
-      - name: Fail if no resources found
+      - name: Nothing to clean up
         if: steps.check.outputs.tag_exists == 'false' && steps.check.outputs.db_exists == 'false' && steps.channel.outputs.channel_exists == 'false'
         run: |
-          echo "No preview resources found for ${{ env.TAG }}. Invalid PR number or already cleaned up."
-          exit 1
+          echo "No preview resources found for ${{ env.TAG }}; cleanup is already complete."
+          echo "### Preview cleanup" >> "$GITHUB_STEP_SUMMARY"
+          echo "No resources found for \`${{ env.TAG }}\`; cleanup is already complete." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Authenticate to GCP via Workload Identity Federation for cloud cleanup
         if: steps.check.outputs.tag_exists == 'true' || steps.check.outputs.db_exists == 'true'
