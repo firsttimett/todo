@@ -70,9 +70,6 @@ jobs:
       TF_VAR_resend_api_key: ${{ secrets.RESEND_API_KEY }}
       TF_VAR_resend_from_email: ${{ secrets.RESEND_FROM_EMAIL }}
       TF_VAR_otp_bypass_code: ${{ inputs.use_otp_bypass && secrets.OTP_BYPASS_CODE || '' }}
-    outputs:
-      firebase_hosting_bootstrapped: ${{ steps.bootstrap-check.outputs.bootstrapped }}
-
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -94,35 +91,8 @@ jobs:
         working-directory: ${{ inputs.terraform_dir }}
         run: terraform init
 
-      - name: Detect Firebase Hosting SA bootstrap status
-        id: bootstrap-check
-        run: |
-          # The Firebase Hosting service agent SA is provisioned lazily by Google
-          # on the first firebase deploy — it cannot be created via Terraform. On
-          # brand-new environments (or the first deploy after switching from allUsers)
-          # the SA does not exist yet, so we skip the app_invoker_hosting IAM binding
-          # here and let terraform_apply_post create it after firebase deploy has run.
-          #
-          # Query the GCP IAM API directly instead of reading Terraform state: a
-          # failed previous apply can leave app_invoker_hosting[0] in state even
-          # though the SA was never actually created in GCP.
-          PROJECT_NUMBER=$(gcloud projects describe "${{ inputs.gcp_project }}" \
-            --format='value(projectNumber)')
-          SA="service-${PROJECT_NUMBER}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-            "https://iam.googleapis.com/v1/projects/-/serviceAccounts/${SA}")
-          echo "Firebase Hosting SA HTTP status: $HTTP_CODE"
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Terraform plan
         working-directory: ${{ inputs.terraform_dir }}
-        env:
-          TF_VAR_firebase_hosting_sa_bootstrapped: ${{ steps.bootstrap-check.outputs.bootstrapped || 'false' }}
         run: terraform plan -out=tfplan
 
       - name: Post plan to job summary
@@ -315,22 +285,17 @@ jobs:
 
   e2e:
     name: E2E Firebase preview (staging only)
-    # Skipped on two bootstrap conditions:
-    # 1. Live channel unpinned — release will pin it as a side effect; e2e runs on subsequent deploys.
-    # 2. Firebase Hosting SA not yet bootstrapped — the SA is provisioned lazily on the first firebase
-    #    deploy (live channel). Without it, Firebase Hosting cannot authenticate to Cloud Run and every
-    #    request returns 403. Skipping here lets release run, which provisions the SA; terraform_apply_post
-    #    then creates the roles/run.invoker binding. E2e runs normally on subsequent deploys.
+    # Skipped when live is unpinned; release pins live as a side effect, and
+    # e2e runs normally on subsequent deploys.
     if: |
       always() &&
       inputs.run_e2e &&
       inputs.environment == 'staging' &&
       needs.deploy.result == 'success' &&
       needs.frontend_artifact.result == 'success' &&
-      needs.check_live_pin.outputs.pinned == 'yes' &&
-      needs.terraform_plan.outputs.firebase_hosting_bootstrapped == 'yes'
+      needs.check_live_pin.outputs.pinned == 'yes'
     runs-on: ubuntu-latest
-    needs: [deploy, frontend_artifact, check_live_pin, terraform_plan]
+    needs: [deploy, frontend_artifact, check_live_pin]
     environment:
       name: ${{ inputs.environment }}
 
@@ -569,65 +534,6 @@ jobs:
             --project "$FIREBASE_PROJECT" \
             --json
 
-  terraform_apply_post:
-    name: Terraform apply (post-deploy IAM)
-    # Applies the Firebase Hosting service agent IAM binding after firebase deploy
-    # has run. On established environments this is a no-op. On brand-new
-    # environments the first terraform_apply skips app_invoker_hosting (the SA
-    # doesn't exist yet); this job creates it now that firebase deploy has
-    # provisioned the SA as a side effect.
-    #
-    # No terraform_gate approval needed — the only possible change is one IAM
-    # binding that is fully determined by the module. A fresh plan is produced
-    # here (not reusing the pre-deploy tfplan) so it reflects the post-deploy
-    # state of the environment.
-    runs-on: ubuntu-latest
-    needs: [release]
-    if: |
-      always() &&
-      needs.release.result == 'success'
-    concurrency:
-      group: deploy-${{ inputs.environment }}
-      cancel-in-progress: false
-    environment:
-      name: ${{ inputs.environment }}
-    env:
-      TF_VAR_jwt_public_key: ${{ secrets.JWT_PUBLIC_KEY }}
-      TF_VAR_jwt_private_key: ${{ secrets.JWT_PRIVATE_KEY }}
-      TF_VAR_resend_api_key: ${{ secrets.RESEND_API_KEY }}
-      TF_VAR_resend_from_email: ${{ secrets.RESEND_FROM_EMAIL }}
-      TF_VAR_otp_bypass_code: ${{ inputs.use_otp_bypass && secrets.OTP_BYPASS_CODE || '' }}
-      TF_VAR_firebase_hosting_sa_bootstrapped: "true"
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          ref: ${{ inputs.git_sha || github.sha }}
-
-      - name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        with:
-          workload_identity_provider: ${{ secrets.WIF_RESOURCE_NAME }}
-          project_id: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
-        with:
-          terraform_version: "~1.7"
-          terraform_wrapper: false
-
-      - name: Terraform init
-        working-directory: ${{ inputs.terraform_dir }}
-        run: terraform init
-
-      - name: Terraform plan
-        working-directory: ${{ inputs.terraform_dir }}
-        run: terraform plan -out=tfplan_post
-
-      - name: Terraform apply
-        working-directory: ${{ inputs.terraform_dir }}
-        run: terraform apply tfplan_post
-
   live_health_watch:
     name: Watch live Firebase health (prod only)
     # Polls the live frontend every 30s for 5 minutes after the Firebase Hosting
@@ -639,9 +545,9 @@ jobs:
     # always() is required: e2e is skipped for production, and GitHub Actions
     # propagates skip status transitively through the dependency chain. Without
     # always(), this job is skipped even though release succeeded.
-    if: always() && inputs.environment == 'production' && needs.release.result == 'success' && needs.terraform_apply_post.result == 'success'
+    if: always() && inputs.environment == 'production' && needs.release.result == 'success'
     runs-on: ubuntu-latest
-    needs: [release, terraform_apply_post]
+    needs: [release]
     permissions: {}
     environment:
       name: ${{ inputs.environment }}
