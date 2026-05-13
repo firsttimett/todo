@@ -88,19 +88,5 @@ variable "deletion_protection" {
 variable "extra_invoker_members" {
   type        = list(string)
   default     = []
-  description = "Additional members to grant roles/run.invoker on the Cloud Run service, beyond the Firebase Hosting service agent."
-}
-
-variable "firebase_hosting_sa_bootstrapped" {
-  type        = bool
-  default     = true
-  description = <<-EOT
-    Whether the Firebase Hosting service agent SA already exists in this project.
-    The SA is provisioned lazily by Google the first time firebase deploy processes
-    a Cloud Run rewrite — it cannot be forced via Terraform. Set to false on the
-    first deploy of a brand-new environment so terraform_apply does not fail trying
-    to bind a non-existent SA. CI detects this automatically via terraform state list
-    and the post-deploy apply (terraform_apply_post) re-applies with true after
-    firebase deploy has run.
-  EOT
+  description = "Additional members to grant roles/run.invoker on the Cloud Run service."
 }

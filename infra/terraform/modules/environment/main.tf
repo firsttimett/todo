@@ -204,17 +204,12 @@ resource "google_cloud_run_v2_service" "app" {
   }
 }
 
-data "google_project" "env" {
-  project_id = var.project_id
-}
-
-resource "google_cloud_run_v2_service_iam_member" "app_invoker_hosting" {
-  count    = var.firebase_hosting_sa_bootstrapped ? 1 : 0
+resource "google_cloud_run_v2_service_iam_member" "app_invoker" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.app.name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:service-${data.google_project.env.number}@gcp-sa-firebasehosting.iam.gserviceaccount.com"
+  member   = "allUsers"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "app_invoker_extra" {
