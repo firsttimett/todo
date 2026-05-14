@@ -10,7 +10,12 @@ module "env" {
   resend_api_key        = var.resend_api_key
   resend_from_email     = var.resend_from_email
   otp_bypass_code       = var.otp_bypass_code
-  extra_invoker_members = ["serviceAccount:firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com"]
+  # Nonprod data is rebuildable, but Firestore delete protection still makes
+  # destructive changes a deliberate two-step operation.
+  firestore_delete_protection_enabled = true
+  firestore_pitr_enabled              = false
+  firestore_backup_schedule           = null
+  extra_invoker_members               = ["serviceAccount:firebase-cicd-nonprod@tfcd-infra.iam.gserviceaccount.com"]
 }
 
 output "app_url" {
