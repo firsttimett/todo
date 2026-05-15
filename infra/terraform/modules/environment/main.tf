@@ -1,5 +1,11 @@
 locals {
-  firestore_db     = "nnow-${var.env_name}"
+  firestore_db                      = "nnow-${var.env_name}"
+  firestore_backup_schedule_enabled = var.firestore_backup_schedule != null
+  firestore_backup_schedule = local.firestore_backup_schedule_enabled ? {
+    recurrence = lower(var.firestore_backup_schedule.recurrence)
+    retention  = var.firestore_backup_schedule.retention
+    day        = try(upper(var.firestore_backup_schedule.day), null)
+  } : null
   app_service_name = "nnow-${var.env_name}"
 }
 
@@ -12,11 +18,38 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "google_firestore_database" "main" {
-  project         = var.project_id
-  name            = local.firestore_db
-  location_id     = var.region
-  type            = "FIRESTORE_NATIVE"
+  project                           = var.project_id
+  name                              = local.firestore_db
+  location_id                       = var.region
+  type                              = "FIRESTORE_NATIVE"
+  delete_protection_state           = var.firestore_delete_protection_enabled ? "DELETE_PROTECTION_ENABLED" : "DELETE_PROTECTION_DISABLED"
+  point_in_time_recovery_enablement = var.firestore_pitr_enabled ? "POINT_IN_TIME_RECOVERY_ENABLED" : "POINT_IN_TIME_RECOVERY_DISABLED"
+
+  # Keep Terraform deletion compatible with managed lifecycle. Firestore delete
+  # protection is the real safety guard, making destructive changes a deliberate
+  # two-step operation.
   deletion_policy = "DELETE"
+}
+
+# PITR covers short-window recovery; scheduled backups cover longer retention.
+resource "google_firestore_backup_schedule" "main" {
+  count = local.firestore_backup_schedule_enabled ? 1 : 0
+
+  project   = var.project_id
+  database  = google_firestore_database.main.name
+  retention = local.firestore_backup_schedule.retention
+
+  dynamic "daily_recurrence" {
+    for_each = local.firestore_backup_schedule.recurrence == "daily" ? [true] : []
+    content {}
+  }
+
+  dynamic "weekly_recurrence" {
+    for_each = local.firestore_backup_schedule.recurrence == "weekly" ? [true] : []
+    content {
+      day = local.firestore_backup_schedule.day
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------

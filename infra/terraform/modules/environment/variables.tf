@@ -85,6 +85,53 @@ variable "deletion_protection" {
   description = "Whether to enable deletion protection on the Cloud Run service."
 }
 
+variable "firestore_delete_protection_enabled" {
+  type        = bool
+  default     = true
+  description = "Whether to enable Firestore database delete protection."
+}
+
+variable "firestore_pitr_enabled" {
+  type        = bool
+  default     = false
+  description = "Whether to enable Firestore point-in-time recovery."
+}
+
+variable "firestore_backup_schedule" {
+  type = object({
+    recurrence = string
+    retention  = string
+    day        = optional(string)
+  })
+  default     = null
+  nullable    = true
+  description = "Optional Firestore backup schedule. recurrence must be daily or weekly; weekly schedules require day."
+
+  validation {
+    condition = (
+      var.firestore_backup_schedule == null
+      || try(contains(["daily", "weekly"], lower(var.firestore_backup_schedule.recurrence)), false)
+    )
+    error_message = "firestore_backup_schedule.recurrence must be daily or weekly."
+  }
+
+  validation {
+    condition = (
+      var.firestore_backup_schedule == null
+      || (
+        try(lower(var.firestore_backup_schedule.recurrence), null) == "daily"
+        && try(var.firestore_backup_schedule.day, null) == null
+      )
+      || (
+        try(lower(var.firestore_backup_schedule.recurrence), null) == "weekly"
+        && try(var.firestore_backup_schedule.day, null) != null
+        && try(contains(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"], upper(var.firestore_backup_schedule.day)), false)
+      )
+    )
+    error_message = "firestore_backup_schedule.day must be omitted for daily schedules and set to a valid weekday for weekly schedules."
+  }
+}
+
 variable "extra_invoker_members" {
   type        = list(string)
   default     = []
